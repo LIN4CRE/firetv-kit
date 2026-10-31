@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-    Fire TV Ultimate Setup Kit - Automated Installer & Optimizer
-    Apps: Stremio, SmartTube, TiviMate
+    Fire TV Ultimate Setup Kit - Automated Network Discovery, App Checklist & Optimizer
+    Supports any Fire TV, Android TV, Google TV, or Shield TV on any Wi-Fi network.
 #>
 
 [CmdletBinding()]
@@ -11,7 +11,7 @@ param(
     [switch]$SkipDebloat
 )
 
-$Host.UI.RawUI.WindowTitle = "Fire TV Ultimate Setup Kit (Stremio, SmartTube, TiviMate)"
+$Host.UI.RawUI.WindowTitle = "Fire TV Ultimate Setup Kit"
 $ErrorActionPreference = "Continue"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -31,11 +31,16 @@ if (-not (Test-Path $AdbExe)) {
     }
 }
 
+# Ensure apks folder exists
+if (-not (Test-Path $ApksDir)) {
+    New-Item -ItemType Directory -Force -Path $ApksDir | Out-Null
+}
+
 function Write-Header {
     Clear-Host
     Write-Host "==========================================================================" -ForegroundColor Cyan
-    Write-Host "       FIRE TV ULTIMATE SETUP KIT (Stremio * SmartTube * TiviMate)        " -ForegroundColor Yellow
-    Write-Host "          Zero-Middleman * AdGuard DNS * ExoPlayer Optimizations          " -ForegroundColor Green
+    Write-Host "       FIRE TV ULTIMATE SETUP KIT - MULTI-DEVICE INSTALLER                " -ForegroundColor Yellow
+    Write-Host "         Auto Network Discovery * App Checklist * Zero-Middleman          " -ForegroundColor Green
     Write-Host "==========================================================================" -ForegroundColor Cyan
     Write-Host ""
 }
@@ -59,70 +64,65 @@ function Invoke-Adb {
     return ($stdout + "`n" + $stderr).Trim()
 }
 
-function Connect-FireTV {
-    param([string]$DeviceIp)
+function Get-FriendlyDeviceName {
+    param([string]$Manufacturer, [string]$Model)
 
-    if ([string]::IsNullOrWhiteSpace($DeviceIp)) {
-        Write-Host "Select Target Fire TV:" -ForegroundColor Cyan
-        Write-Host "  [1] Downstairs Fire TV Cube (192.168.0.64)" -ForegroundColor White
-        Write-Host "  [2] Upstairs Toshiba Fire TV (192.168.0.140)" -ForegroundColor White
-        Write-Host "  [3] Scan local network for Fire TVs" -ForegroundColor Yellow
-        Write-Host "  [4] Enter custom IP address" -ForegroundColor White
-        Write-Host ""
-        $choice = Read-Host "Enter option [1-4]"
-
-        switch ($choice) {
-            "1" { $DeviceIp = "192.168.0.64" }
-            "2" { $DeviceIp = "192.168.0.140" }
-            "3" {
-                $DeviceIp = Find-FireTVOnNetwork
-                if (-not $DeviceIp) {
-                    Write-Host "No Fire TV automatically found. Enter IP manually:" -ForegroundColor Red
-                    $DeviceIp = Read-Host "IP Address"
-                }
-            }
-            "4" { $DeviceIp = Read-Host "Enter Fire TV IP Address" }
-            default { $DeviceIp = "192.168.0.64" }
-        }
+    $modelMap = @{
+        "AFTGAZL" = "Amazon Fire TV Cube (3rd Gen)"
+        "AFTR"    = "Amazon Fire TV Cube (2nd Gen)"
+        "AFTKM"   = "Amazon Fire TV Cube (1st Gen)"
+        "AFTKA"   = "Amazon Fire TV Stick 4K Max (1st Gen)"
+        "AFTKRT"  = "Amazon Fire TV Stick 4K Max (2nd Gen)"
+        "AFTMM"   = "Amazon Fire TV Stick 4K (1st Gen)"
+        "AFTKMST" = "Amazon Fire TV Stick 4K (2nd Gen)"
+        "AFTSSS"  = "Amazon Fire TV Stick Lite"
+        "AFTSS"   = "Amazon Fire TV Stick (3rd Gen)"
+        "AFTT"    = "Amazon Fire TV Stick (2nd Gen)"
+        "AFTB"    = "Amazon Fire TV (1st Gen)"
+        "AFTS"    = "Amazon Fire TV (2nd Gen)"
+        "AFTN"    = "Amazon Fire TV (3rd Gen Pendant)"
+        "AFTBOXE1"= "Toshiba 4K UHD Fire TV Edition"
+        "AFTJM"   = "Insignia 4K UHD Fire TV Edition"
+        "SHIELD Android TV" = "NVIDIA SHIELD TV"
+        "Chromecast" = "Google Chromecast with Google TV"
     }
 
-    $target = "{0}:5555" -f $DeviceIp
-    Write-Host "`n[*] Connecting to Fire TV at $target..." -ForegroundColor Cyan
-
-    Invoke-Adb "disconnect" | Out-Null
-    Start-Sleep -Milliseconds 500
-    $out = Invoke-Adb "connect $target"
-    Write-Host "    $out" -ForegroundColor Gray
-
-    # Verify device state
-    $state = Invoke-Adb "-s $target get-state"
-    if ($state -match "device") {
-        Write-Host "[+] Successfully connected to $target!" -ForegroundColor Green
-        # Wake device
-        Invoke-Adb "-s $target shell input keyevent KEYCODE_WAKEUP" | Out-Null
-        return $target
+    if ($modelMap.ContainsKey($Model)) {
+        return $modelMap[$Model]
+    }
+    
+    if ($Manufacturer -and $Model) {
+        return "$Manufacturer $Model"
+    } elseif ($Model) {
+        return $Model
     } else {
-        Write-Host "[!] Could not connect to $target ($state)." -ForegroundColor Red
-        Write-Host "    Ensure ADB Debugging is enabled on your Fire TV:" -ForegroundColor Yellow
-        Write-Host "    Settings -> My Fire TV -> Developer Options -> ADB Debugging [ON]" -ForegroundColor Yellow
-        return $null
+        return "Smart TV / Android TV Device"
     }
 }
 
-function Find-FireTVOnNetwork {
-    Write-Host "`n[*] Scanning local subnet for Android / Fire TV devices on port 5555..." -ForegroundColor Cyan
-    
-    # Get local IPv4
-    $localIp = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -like "192.168.*" -or $_.IPAddress -like "10.*" } | Select-Object -First 1).IPAddress
-    if (-not $localIp) { return $null }
+function Discover-TVsOnNetwork {
+    Write-Host "==========================================================================" -ForegroundColor Cyan
+    Write-Host "                DISCOVERING SMART TVS ON YOUR WI-FI                       " -ForegroundColor Yellow
+    Write-Host "==========================================================================" -ForegroundColor Cyan
+    Write-Host ""
+
+    # Detect active IPv4 network interface
+    $localIp = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { 
+        ($_.IPAddress -like "192.168.*" -or $_.IPAddress -like "10.*" -or $_.IPAddress -like "172.*") -and 
+        $_.IPAddress -notlike "*.255" -and $_.IPAddress -ne "127.0.0.1"
+    } | Select-Object -First 1).IPAddress
+
+    if (-not $localIp) {
+        Write-Host "[!] Could not automatically detect local network adapter." -ForegroundColor Yellow
+        $ip = Read-Host "Enter Fire TV / Android TV IP address manually"
+        return $ip
+    }
 
     $base = $localIp.Substring(0, $localIp.LastIndexOf("."))
-    $subnetMsg = "    Subnet detected: {0}.1 - {0}.254" -f $base
-    Write-Host $subnetMsg -ForegroundColor Gray
+    $scanMsg = "[*] Scanning network ({0}.1 - {0}.254) for Android & Fire TVs on port 5555..." -f $base
+    Write-Host $scanMsg -ForegroundColor Cyan
 
-    $foundIps = [System.Collections.Generic.List[string]]::new()
-    
-    # Rapid non-blocking port 5555 probe compatible with PowerShell 5.1 and 7+
+    # Multi-socket non-blocking port 5555 probe
     $probes = [System.Collections.Generic.List[PSCustomObject]]::new()
     1..254 | ForEach-Object {
         $ip = "{0}.{1}" -f $base, $_
@@ -139,13 +139,14 @@ function Find-FireTVOnNetwork {
         }
     }
 
-    # Wait up to 300ms for connection handshakes
-    Start-Sleep -Milliseconds 300
+    # Wait 400ms for connection responses
+    Start-Sleep -Milliseconds 400
 
+    $activeIps = [System.Collections.Generic.List[string]]::new()
     foreach ($p in $probes) {
         try {
             if ($p.AsyncResult.IsCompleted -and $p.Client.Connected) {
-                $foundIps.Add($p.IP)
+                $activeIps.Add($p.IP)
                 $p.Client.EndConnect($p.AsyncResult)
             }
         } catch { }
@@ -154,53 +155,316 @@ function Find-FireTVOnNetwork {
         }
     }
 
-    if ($foundIps.Count -eq 0) {
-        Write-Host "    No open ADB devices found on subnet." -ForegroundColor Yellow
-        return $null
+    if ($activeIps.Count -eq 0) {
+        Write-Host "`n[!] No active Android TV / Fire TV devices found on this Wi-Fi network." -ForegroundColor Yellow
+        Write-Host "    Make sure 'ADB Debugging' is enabled on your TV:" -ForegroundColor White
+        Write-Host "    Settings -> My Fire TV -> Developer Options -> ADB Debugging [ON]" -ForegroundColor White
+        Write-Host ""
+        Write-Host "  [M] Enter TV IP address manually" -ForegroundColor White
+        Write-Host "  [R] Rescan network" -ForegroundColor White
+        $choice = Read-Host "Select option [M/R]"
+        if ($choice -match "^[Rr]") {
+            return Discover-TVsOnNetwork
+        } else {
+            return (Read-Host "Enter TV IP address")
+        }
     }
 
-    Write-Host "`n[+] Found $($foundIps.Count) device(s) with ADB port open:" -ForegroundColor Green
-    for ($i=0; $i -lt $foundIps.Count; $i++) {
-        Write-Host "    [$($i+1)] $($foundIps[$i])" -ForegroundColor White
-    }
-    
-    if ($foundIps.Count -eq 1) {
-        return $foundIps[0]
-    } else {
-        $sel = Read-Host "Select device number (1-$($foundIps.Count))"
-        $idx = [int]$sel - 1
-        if ($idx -ge 0 -and $idx -lt $foundIps.Count) {
-            return $foundIps[$idx]
+    # Inspect each discovered TV to get friendly model and OS
+    Write-Host "`n[+] Found $($activeIps.Count) device(s) on Wi-Fi. Inspecting TV hardware details..." -ForegroundColor Green
+    $discoveredDevices = @()
+
+    foreach ($ip in $activeIps) {
+        $t = "{0}:5555" -f $ip
+        Invoke-Adb "connect $t" | Out-Null
+        
+        $manuf = (Invoke-Adb "-s $t shell getprop ro.product.manufacturer").Trim()
+        $model = (Invoke-Adb "-s $t shell getprop ro.product.model").Trim()
+        $osVer = (Invoke-Adb "-s $t shell getprop ro.build.version.name").Trim()
+        if (-not $osVer) {
+            $rel = (Invoke-Adb "-s $t shell getprop ro.build.version.release").Trim()
+            $osVer = "Android $rel"
         }
-        return $foundIps[0]
+
+        $friendlyName = Get-FriendlyDeviceName $manuf $model
+        $discoveredDevices += [PSCustomObject]@{
+            IP           = $ip
+            Target       = $t
+            FriendlyName = $friendlyName
+            OS           = $osVer
+            ModelCode    = $model
+        }
+    }
+
+    Write-Host "`nDiscovered Smart TVs:" -ForegroundColor Cyan
+    for ($i = 0; $i -lt $discoveredDevices.Count; $i++) {
+        $d = $discoveredDevices[$i]
+        $num = $i + 1
+        Write-Host ("  [{0}] {1}" -f $num, $d.FriendlyName) -ForegroundColor White -NoNewline
+        Write-Host (" [{0}]" -f $d.IP) -ForegroundColor Yellow -NoNewline
+        Write-Host (" - {0}" -f $d.OS) -ForegroundColor Gray
+    }
+    Write-Host "  [M] Enter custom IP address manually" -ForegroundColor White
+    Write-Host "  [R] Rescan network" -ForegroundColor White
+    Write-Host ""
+
+    while ($true) {
+        $sel = Read-Host "Select TV [1-$($discoveredDevices.Count), M, R]"
+        if ($sel -match "^[Rr]") {
+            return Discover-TVsOnNetwork
+        } elseif ($sel -match "^[Mm]") {
+            return (Read-Host "Enter TV IP address")
+        } else {
+            $idx = [int]$sel - 1
+            if ($idx -ge 0 -and $idx -lt $discoveredDevices.Count) {
+                return $discoveredDevices[$idx].IP
+            }
+            Write-Host "Invalid selection. Please choose 1 to $($discoveredDevices.Count)." -ForegroundColor Red
+        }
     }
 }
 
-function Install-StreamingApps {
-    param([string]$Target)
+function Connect-FireTV {
+    param([string]$DeviceIp)
 
-    Write-Host "`n========================================================" -ForegroundColor Cyan
-    Write-Host "           [+] INSTALLING STREAMING APPS                " -ForegroundColor Yellow
-    Write-Host "========================================================" -ForegroundColor Cyan
+    if ([string]::IsNullOrWhiteSpace($DeviceIp)) {
+        $DeviceIp = Discover-TVsOnNetwork
+    }
 
-    $apps = @(
-        @{ Name = "Stremio (Android TV)"; Package = "com.stremio.one"; File = "stremio-tv.apk"; Url = "https://dl.strem.io/android/v1.10.4-androidTV/com.stremio.one-1.10.4-31048580-armeabi-v7a.apk" },
-        @{ Name = "SmartTube (Ad-Free)"; Package = "org.smarttube.beta"; File = "smarttube.apk"; Url = "https://github.com/yuliskov/SmartTube/releases/download/latest/smarttube_beta.apk" },
-        @{ Name = "TiviMate (IPTV)"; Package = "ar.tvplayer.tv"; File = "tivimate.apk"; Url = "https://tivimate.com/tivimate.apk" }
+    if ([string]::IsNullOrWhiteSpace($DeviceIp)) {
+        return $null
+    }
+
+    $target = "{0}:5555" -f $DeviceIp
+    Write-Host "`n[*] Connecting to TV at $target..." -ForegroundColor Cyan
+
+    Invoke-Adb "disconnect" | Out-Null
+    Start-Sleep -Milliseconds 400
+    $out = Invoke-Adb "connect $target"
+    Write-Host "    $out" -ForegroundColor Gray
+
+    # Verify device state
+    $state = Invoke-Adb "-s $target get-state"
+    if ($state -match "device") {
+        # Wake device
+        Invoke-Adb "-s $target shell input keyevent KEYCODE_WAKEUP" | Out-Null
+        
+        $model = (Invoke-Adb "-s $target shell getprop ro.product.model").Trim()
+        $manuf = (Invoke-Adb "-s $target shell getprop ro.product.manufacturer").Trim()
+        $name  = Get-FriendlyDeviceName $manuf $model
+        
+        Write-Host "`n[+] Successfully connected to $name ($target)!" -ForegroundColor Green
+        return $target
+    } else {
+        Write-Host "[!] Could not establish ADB connection to $target ($state)." -ForegroundColor Red
+        Write-Host "    Make sure you accepted the 'Always allow from this computer' prompt on your TV screen." -ForegroundColor Yellow
+        return $null
+    }
+}
+
+# ----------------- APP CATALOG DEFINITIONS -----------------
+$AppCatalog = @(
+    [PSCustomObject]@{
+        Id          = 1
+        Selected    = $true
+        Name        = "Stremio (Android TV)"
+        Description = "Movies & Series via P2P (ExoPlayer deadlock fixed)"
+        Package     = "com.stremio.one"
+        File        = "stremio-tv.apk"
+        Url         = "https://dl.strem.io/android/v1.10.4-androidTV/com.stremio.one-1.10.4-31048580-armeabi-v7a.apk"
+        IsCore      = $true
+    },
+    [PSCustomObject]@{
+        Id          = 2
+        Selected    = $true
+        Name        = "SmartTube (4K HDR)"
+        Description = "Ad-free YouTube with SponsorBlock & background audio"
+        Package     = "org.smarttube.beta"
+        File        = "smarttube.apk"
+        Url         = "https://github.com/yuliskov/SmartTube/releases/download/latest/smarttube_beta.apk"
+        IsCore      = $true
+    },
+    [PSCustomObject]@{
+        Id          = 3
+        Selected    = $true
+        Name        = "TiviMate"
+        Description = "Premium IPTV Player with EPG channel timeline guide"
+        Package     = "ar.tvplayer.tv"
+        File        = "tivimate.apk"
+        Url         = "https://tivimate.com/tivimate.apk"
+        IsCore      = $true
+    },
+    [PSCustomObject]@{
+        Id          = 4
+        Selected    = $false
+        Name        = "Kodi 21 (Omega)"
+        Description = "Modular open-source home theater & community addons"
+        Package     = "org.xbmc.kodi"
+        File        = "kodi-omega.apk"
+        Url         = "https://mirrors.kodi.tv/releases/android/arm/kodi-21.2-Omega-armeabi-v7a.apk"
+        IsCore      = $false
+    },
+    [PSCustomObject]@{
+        Id          = 5
+        Selected    = $false
+        Name        = "VLC for Android TV"
+        Description = "Universal media player for all USB & network video files"
+        Package     = "org.videolan.vlc"
+        File        = "vlc-android.apk"
+        Url         = "https://get.videolan.org/vlc-android/last/VLC-Android-3.7.1-armeabi-v7a.apk"
+        IsCore      = $false
+    },
+    [PSCustomObject]@{
+        Id          = 6
+        Selected    = $false
+        Name        = "Nova Video Player"
+        Description = "Open-source player with automatic movie poster scraping"
+        Package     = "org.courville.nova"
+        File        = "nova-video-player.apk"
+        Url         = "https://github.com/nova-video-player/aos-AVP/releases/download/v6.6.2/org.courville.nova-2673649-6.6.2-20261027.1847-universal-release.apk"
+        IsCore      = $false
+    },
+    [PSCustomObject]@{
+        Id          = 7
+        Selected    = $false
+        Name        = "RetroArch"
+        Description = "All-in-one retro gaming console & arcade emulator"
+        Package     = "com.retroarch.ra32"
+        File        = "retroarch.apk"
+        Url         = "https://buildbot.libretro.com/stable/1.19.1/android/RetroArch_ra32.apk"
+        IsCore      = $false
+    },
+    [PSCustomObject]@{
+        Id          = 8
+        Selected    = $false
+        Name        = "F-Droid App Store"
+        Description = "Independent open-source application repository for TV"
+        Package     = "org.fdroid.fdroid"
+        File        = "fdroid.apk"
+        Url         = "https://f-droid.org/F-Droid.apk"
+        IsCore      = $false
+    }
+)
+
+function Show-AppChecklist {
+    while ($true) {
+        Clear-Host
+        Write-Host "==========================================================================" -ForegroundColor Cyan
+        Write-Host "                  SELECT APPS TO INSTALL ON YOUR TV                       " -ForegroundColor Yellow
+        Write-Host "==========================================================================" -ForegroundColor Cyan
+        Write-Host ""
+        
+        foreach ($app in $AppCatalog) {
+            $box = if ($app.Selected) { "[X]" } else { "[ ]" }
+            $color = if ($app.Selected) { "Green" } else { "DarkGray" }
+            
+            Write-Host ("  {0} {1}. " -f $box, $app.Id) -ForegroundColor $color -NoNewline
+            Write-Host ("{0,-22}" -f $app.Name) -ForegroundColor White -NoNewline
+            Write-Host (" - {0}" -f $app.Description) -ForegroundColor Gray
+        }
+
+        Write-Host ""
+        Write-Host "--------------------------------------------------------------------------" -ForegroundColor Cyan
+        Write-Host " Commands:" -ForegroundColor Yellow
+        Write-Host "   Type a number [1-$($AppCatalog.Count)] to toggle that app on or off" -ForegroundColor White
+        Write-Host "   Type [A] to Select All    |  Type [N] to Clear All" -ForegroundColor White
+        Write-Host "   Press [Enter] when ready to proceed with installation" -ForegroundColor Green
+        Write-Host "--------------------------------------------------------------------------" -ForegroundColor Cyan
+        
+        $inputVal = (Read-Host "Choice [1-$($AppCatalog.Count), A, N, or Enter]").Trim()
+
+        if ([string]::IsNullOrWhiteSpace($inputVal)) {
+            $selectedCount = ($AppCatalog | Where-Object { $_.Selected }).Count
+            if ($selectedCount -eq 0) {
+                Write-Host "`n[!] You have not selected any apps! Please select at least 1 app." -ForegroundColor Red
+                Start-Sleep -Seconds 1
+                continue
+            }
+            break
+        } elseif ($inputVal -match "^[Aa]") {
+            $AppCatalog | ForEach-Object { $_.Selected = $true }
+        } elseif ($inputVal -match "^[Nn]") {
+            $AppCatalog | ForEach-Object { $_.Selected = $false }
+        } else {
+            $num = 0
+            if ([int]::TryParse($inputVal, [ref]$num)) {
+                $targetApp = $AppCatalog | Where-Object { $_.Id -eq $num }
+                if ($targetApp) {
+                    $targetApp.Selected = -not $targetApp.Selected
+                }
+            }
+        }
+    }
+}
+
+function Show-TweaksChecklist {
+    $stremioSelected = ($AppCatalog | Where-Object { $_.Id -eq 1 -and $_.Selected }) -ne $null
+
+    $tweaks = @(
+        [PSCustomObject]@{ Id = 1; Selected = $true; Name = "AdGuard Private DNS (DoT)"; Desc = "Zero-VPN system-wide ad, tracker & telemetry blocker" },
+        [PSCustomObject]@{ Id = 2; Selected = $stremioSelected; Name = "Stremio ExoPlayer Fix"; Desc = "Disable tunneled playback (stops trailer bug) & Ultra Fast profile" },
+        [PSCustomObject]@{ Id = 3; Selected = $true; Name = "Amazon Telemetry Debloat"; Desc = "Disable retail demos, ad metrics & shopping background services" }
     )
 
-    foreach ($app in $apps) {
+    while ($true) {
+        Clear-Host
+        Write-Host "==========================================================================" -ForegroundColor Cyan
+        Write-Host "                 SELECT SYSTEM TWEAKS & OPTIMIZATIONS                     " -ForegroundColor Yellow
+        Write-Host "==========================================================================" -ForegroundColor Cyan
+        Write-Host ""
+
+        foreach ($t in $tweaks) {
+            $box = if ($t.Selected) { "[X]" } else { "[ ]" }
+            $color = if ($t.Selected) { "Green" } else { "DarkGray" }
+            Write-Host ("  {0} {1}. " -f $box, $t.Id) -ForegroundColor $color -NoNewline
+            Write-Host ("{0,-28}" -f $t.Name) -ForegroundColor White -NoNewline
+            Write-Host (" - {0}" -f $t.Desc) -ForegroundColor Gray
+        }
+
+        Write-Host ""
+        Write-Host "--------------------------------------------------------------------------" -ForegroundColor Cyan
+        Write-Host " Commands:" -ForegroundColor Yellow
+        Write-Host "   Type [1-3] to toggle on/off  |  Press [Enter] to start deployment" -ForegroundColor White
+        Write-Host "--------------------------------------------------------------------------" -ForegroundColor Cyan
+
+        $inVal = (Read-Host "Choice [1-3 or Enter]").Trim()
+        if ([string]::IsNullOrWhiteSpace($inVal)) {
+            break
+        } else {
+            $num = 0
+            if ([int]::TryParse($inVal, [ref]$num)) {
+                $targetTweak = $tweaks | Where-Object { $_.Id -eq $num }
+                if ($targetTweak) {
+                    $targetTweak.Selected = -not $targetTweak.Selected
+                }
+            }
+        }
+    }
+
+    return $tweaks
+}
+
+function Install-SelectedApps {
+    param([string]$Target)
+
+    $chosenApps = $AppCatalog | Where-Object { $_.Selected }
+
+    Write-Host "`n========================================================" -ForegroundColor Cyan
+    Write-Host ("           INSTALLING {0} SELECTED APP(S)              " -f $chosenApps.Count) -ForegroundColor Yellow
+    Write-Host "========================================================" -ForegroundColor Cyan
+
+    foreach ($app in $chosenApps) {
         $apkPath = Join-Path $ApksDir $app.File
-        Write-Host "`n[*] Processing: $($app.Name)..." -ForegroundColor Cyan
+        Write-Host ("`n[*] Processing: {0}..." -f $app.Name) -ForegroundColor Cyan
 
         # Download if missing
         if (-not (Test-Path $apkPath)) {
-            Write-Host "    Downloading $($app.File)..." -ForegroundColor Yellow
+            Write-Host ("    Downloading {0} from official source..." -f $app.File) -ForegroundColor Yellow
             try {
                 Invoke-WebRequest -Uri $app.Url -OutFile $apkPath -UseBasicParsing
                 Write-Host "    Download complete!" -ForegroundColor Green
             } catch {
-                Write-Host "    [!] Download failed: $_" -ForegroundColor Red
+                Write-Host ("    [!] Download failed: {0}" -f $_) -ForegroundColor Red
                 continue
             }
         }
@@ -208,16 +472,16 @@ function Install-StreamingApps {
         # Check if already installed
         $check = Invoke-Adb "-s $Target shell pm list packages $($app.Package)"
         if ($check -match $app.Package) {
-            Write-Host "    App already present. Updating/Reinstalling..." -ForegroundColor Gray
+            Write-Host "    App already present. Updating..." -ForegroundColor Gray
         } else {
-            Write-Host "    Installing fresh copy..." -ForegroundColor Gray
+            Write-Host "    Installing fresh package..." -ForegroundColor Gray
         }
 
         $res = Invoke-Adb "-s $Target install -r -d `"$apkPath`""
         if ($res -match "Success") {
-            Write-Host "    [+] $($app.Name) successfully installed!" -ForegroundColor Green
+            Write-Host ("    [+] {0} successfully installed!" -f $app.Name) -ForegroundColor Green
         } else {
-            Write-Host "    [!] Install output: $res" -ForegroundColor Yellow
+            Write-Host ("    [!] Install result: {0}" -f $res) -ForegroundColor Yellow
         }
     }
 
@@ -227,6 +491,8 @@ function Install-StreamingApps {
     Invoke-Adb "-s $Target shell pm grant com.stremio.one android.permission.READ_EXTERNAL_STORAGE" 2>$null | Out-Null
     Invoke-Adb "-s $Target shell pm grant org.smarttube.beta android.permission.RECORD_AUDIO" 2>$null | Out-Null
     Invoke-Adb "-s $Target shell pm grant ar.tvplayer.tv android.permission.WRITE_EXTERNAL_STORAGE" 2>$null | Out-Null
+    Invoke-Adb "-s $Target shell pm grant org.videolan.vlc android.permission.WRITE_EXTERNAL_STORAGE" 2>$null | Out-Null
+    Invoke-Adb "-s $Target shell pm grant org.courville.nova android.permission.WRITE_EXTERNAL_STORAGE" 2>$null | Out-Null
     Write-Host "    [+] Runtime permissions configured." -ForegroundColor Green
 }
 
@@ -234,10 +500,10 @@ function Configure-PrivateDNS {
     param([string]$Target)
 
     Write-Host "`n========================================================" -ForegroundColor Cyan
-    Write-Host "     [+] CONFIGURING ADGUARD PRIVATE DNS (Zero-VPN)     " -ForegroundColor Yellow
+    Write-Host "     CONFIGURING ADGUARD PRIVATE DNS (Zero-VPN)         " -ForegroundColor Yellow
     Write-Host "========================================================" -ForegroundColor Cyan
 
-    Write-Host "[*] Removing any old VPN or filter wrappers..." -ForegroundColor Cyan
+    Write-Host "[*] Removing any legacy VPN filters..." -ForegroundColor Cyan
     Invoke-Adb "-s $Target shell am force-stop dnsfilter.android" | Out-Null
     Invoke-Adb "-s $Target shell pm uninstall dnsfilter.android" 2>$null | Out-Null
 
@@ -251,8 +517,8 @@ function Configure-PrivateDNS {
     $mode = Invoke-Adb "-s $Target shell settings get global private_dns_mode"
     $spec = Invoke-Adb "-s $Target shell settings get global private_dns_specifier"
 
-    Write-Host "    DNS Mode: $mode" -ForegroundColor Gray
-    Write-Host "    Provider: $spec" -ForegroundColor Gray
+    Write-Host ("    DNS Mode: {0}" -f $mode) -ForegroundColor Gray
+    Write-Host ("    Provider: {0}" -f $spec) -ForegroundColor Gray
 
     # Test latency and resolution
     $ping = Invoke-Adb "-s $Target shell ping -c 3 8.8.8.8"
@@ -268,8 +534,14 @@ function Optimize-StremioSettings {
     param([string]$Target)
 
     Write-Host "`n========================================================" -ForegroundColor Cyan
-    Write-Host "   [+] OPTIMIZING STREMIO (Trailer Bug Fix & Ultra Speed)" -ForegroundColor Yellow
+    Write-Host "   OPTIMIZING STREMIO (Trailer Bug Fix & Ultra Speed)   " -ForegroundColor Yellow
     Write-Host "========================================================" -ForegroundColor Cyan
+
+    $checkStremio = Invoke-Adb "-s $Target shell pm list packages com.stremio.one"
+    if ($checkStremio -notmatch "com.stremio.one") {
+        Write-Host "[!] Stremio is not installed on this device. Skipping optimization." -ForegroundColor Gray
+        return
+    }
 
     Write-Host "[*] Launching Stremio to configure settings..." -ForegroundColor Cyan
     Invoke-Adb "-s $Target shell monkey -p com.stremio.one -c android.intent.category.LAUNCHER 1" | Out-Null
@@ -279,30 +551,19 @@ function Optimize-StremioSettings {
     Write-Host "[*] Opening Playback settings..." -ForegroundColor Cyan
     Invoke-Adb "-s $Target shell input keyevent KEYCODE_DPAD_LEFT" | Out-Null
     Start-Sleep -Milliseconds 300
-    Invoke-Adb "-s $Target shell input keyevent KEYCODE_DPAD_DOWN" | Out-Null
-    Start-Sleep -Milliseconds 200
-    Invoke-Adb "-s $Target shell input keyevent KEYCODE_DPAD_DOWN" | Out-Null
-    Start-Sleep -Milliseconds 200
-    Invoke-Adb "-s $Target shell input keyevent KEYCODE_DPAD_DOWN" | Out-Null
-    Start-Sleep -Milliseconds 200
-    Invoke-Adb "-s $Target shell input keyevent KEYCODE_DPAD_DOWN" | Out-Null
-    Start-Sleep -Milliseconds 200
-    Invoke-Adb "-s $Target shell input keyevent KEYCODE_DPAD_DOWN" | Out-Null
-    Start-Sleep -Milliseconds 200
+    1..5 | ForEach-Object {
+        Invoke-Adb "-s $Target shell input keyevent KEYCODE_DPAD_DOWN" | Out-Null
+        Start-Sleep -Milliseconds 200
+    }
     Invoke-Adb "-s $Target shell input keyevent KEYCODE_DPAD_CENTER" | Out-Null
     Start-Sleep -Seconds 1
 
-    # In Settings:
-    # 1. Playback tab is already selected by default
-    # Right to Playback options:
-    # Option 1: Hardware-accelerated decoding (keep ON)
-    # Option 2: Frame rate matching -> Disabled
-    # Option 3: Tunnelled playback -> OFF
+    # In Settings: Playback tab
     Write-Host "[*] Configuring Tunneled Playback and Frame Rate Matching..." -ForegroundColor Cyan
     Invoke-Adb "-s $Target shell input keyevent KEYCODE_DPAD_RIGHT" | Out-Null
     Start-Sleep -Milliseconds 300
     
-    # Check Server tab for Torrent Profile -> Ultra Fast
+    # In Settings: Server tab for Torrent Profile -> Ultra Fast
     Write-Host "[*] Configuring Server Torrent Profile to 'Ultra Fast'..." -ForegroundColor Cyan
     Invoke-Adb "-s $Target shell input keyevent KEYCODE_DPAD_LEFT" | Out-Null
     Start-Sleep -Milliseconds 300
@@ -330,7 +591,7 @@ function Debloat-FireTV {
     param([string]$Target)
 
     Write-Host "`n========================================================" -ForegroundColor Cyan
-    Write-Host "          [+] DEBLOATING FIRE TV PERFORMANCE            " -ForegroundColor Yellow
+    Write-Host "          DEBLOATING FIRE TV PERFORMANCE                " -ForegroundColor Yellow
     Write-Host "========================================================" -ForegroundColor Cyan
 
     $bloat = @(
@@ -349,35 +610,35 @@ function Debloat-FireTV {
         $res = Invoke-Adb "-s $Target shell pm disable-user --user 0 $pkg"
         if ($res -match "disabled") {
             $disabledCount++
-            Write-Host "    [-] Disabled: $pkg" -ForegroundColor Gray
+            Write-Host ("    [-] Disabled: {0}" -f $pkg) -ForegroundColor Gray
         }
     }
 
-    Write-Host "[+] Debloat complete ($disabledCount background telemetry packages disabled)." -ForegroundColor Green
+    Write-Host ("[+] Debloat complete ({0} background telemetry packages disabled)." -f $disabledCount) -ForegroundColor Green
     Write-Host "    Core system functions (Wi-Fi, Bluetooth, Audio, Remote, Settings) remain untouched." -ForegroundColor Green
 }
 
-# ----------------- MAIN FLOW -----------------
+# ----------------- MAIN EXECUTION FLOW -----------------
 Write-Header
 
 if ($Express) {
     $target = Connect-FireTV $TargetIP
     if ($target) {
         Configure-PrivateDNS $target
-        Install-StreamingApps $target
+        Install-SelectedApps $target
         Optimize-StremioSettings $target
         if (-not $SkipDebloat) { Debloat-FireTV $target }
 
         Write-Host "`n========================================================" -ForegroundColor Green
-        Write-Host "       [+] ALL TASKS COMPLETED SUCCESSFULLY!             " -ForegroundColor Yellow
+        Write-Host "       ALL TASKS COMPLETED SUCCESSFULLY!                " -ForegroundColor Yellow
         Write-Host "========================================================" -ForegroundColor Green
-        Write-Host "Your Fire TV is 100% configured and ready to use." -ForegroundColor White
+        Write-Host "Your TV is 100% configured and ready to use." -ForegroundColor White
         Write-Host "No computer or middleman is needed." -ForegroundColor White
     }
     exit 0
 }
 
-# Interactive Menu
+# 1. Select / Discover TV
 $target = Connect-FireTV $TargetIP
 if (-not $target) {
     Write-Host "`nExiting setup." -ForegroundColor Red
@@ -385,48 +646,47 @@ if (-not $target) {
     exit 1
 }
 
-while ($true) {
-    Write-Host "`n========================================================" -ForegroundColor Cyan
-    Write-Host "Connected Device: $target" -ForegroundColor Yellow
-    Write-Host "========================================================" -ForegroundColor Cyan
-    Write-Host "  [1] Express 1-Click Setup (Full Install + DNS + Stremio Tune + Debloat)" -ForegroundColor Green
-    Write-Host "  [2] Install Streaming Apps (Stremio, SmartTube, TiviMate)" -ForegroundColor White
-    Write-Host "  [3] Configure AdGuard Private DNS (Ad & Tracker Blocker)" -ForegroundColor White
-    Write-Host "  [4] Apply Stremio Optimizations (Fix Trailer Bug & Buffering)" -ForegroundColor White
-    Write-Host "  [5] Debloat Fire TV Performance (Disable Amazon Telemetry)" -ForegroundColor White
-    Write-Host "  [6] Wake Screen & Go to Fire TV Home" -ForegroundColor White
-    Write-Host "  [7] Prepare USB Flash Drive Toolkit" -ForegroundColor Yellow
-    Write-Host "  [Q] Exit" -ForegroundColor Red
-    Write-Host ""
+# 2. Select Apps via Interactive Checklist
+Show-AppChecklist
 
-    $action = Read-Host "Choose option [1-7 or Q]"
+# 3. Select System Tweaks & Optimizations Checklist
+$chosenTweaks = Show-TweaksChecklist
 
-    switch ($action) {
-        "1" {
-            Configure-PrivateDNS $target
-            Install-StreamingApps $target
-            Optimize-StremioSettings $target
-            Debloat-FireTV $target
-            Write-Host "`n[+] Full express setup finished!" -ForegroundColor Green
-        }
-        "2" { Install-StreamingApps $target }
-        "3" { Configure-PrivateDNS $target }
-        "4" { Optimize-StremioSettings $target }
-        "5" { Debloat-FireTV $target }
-        "6" {
-            Invoke-Adb "-s $target shell input keyevent KEYCODE_HOME" | Out-Null
-            Write-Host "[+] Sent Home keyevent." -ForegroundColor Green
-        }
-        "7" {
-            $prepScript = Join-Path $ScriptDir "prepare-usb.ps1"
-            if (Test-Path $prepScript) {
-                & $prepScript
-            } else {
-                Write-Host "prepare-usb.ps1 not found." -ForegroundColor Red
-            }
-        }
-        "Q" { break }
-        "q" { break }
-        default { Write-Host "Invalid selection." -ForegroundColor Red }
-    }
+# 4. Start Deployment
+Clear-Host
+Write-Host "==========================================================================" -ForegroundColor Cyan
+Write-Host "                 DEPLOYING SELECTED APPS & OPTIMIZATIONS                  " -ForegroundColor Yellow
+Write-Host "==========================================================================" -ForegroundColor Cyan
+Write-Host ("Target Device: {0}" -f $target) -ForegroundColor White
+
+# Run DNS if selected
+$dnsTweak = $chosenTweaks | Where-Object { $_.Id -eq 1 -and $_.Selected }
+if ($dnsTweak) {
+    Configure-PrivateDNS $target
 }
+
+# Run Apps
+Install-SelectedApps $target
+
+# Run Stremio Tweak if selected
+$stremioTweak = $chosenTweaks | Where-Object { $_.Id -eq 2 -and $_.Selected }
+if ($stremioTweak) {
+    Optimize-StremioSettings $target
+}
+
+# Run Debloat if selected
+$debTweak = $chosenTweaks | Where-Object { $_.Id -eq 3 -and $_.Selected }
+if ($debTweak) {
+    Debloat-FireTV $target
+}
+
+# Wake and return to TV Home screen
+Invoke-Adb "-s $target shell input keyevent KEYCODE_HOME" | Out-Null
+
+Write-Host "`n==========================================================================" -ForegroundColor Green
+Write-Host "       CONGRATULATIONS! YOUR TV SETUP IS COMPLETE!                        " -ForegroundColor Yellow
+Write-Host "==========================================================================" -ForegroundColor Green
+Write-Host "All selected apps have been installed and system tweaks applied." -ForegroundColor White
+Write-Host "Your TV functions completely standalone. You can turn off your PC." -ForegroundColor White
+Write-Host ""
+pause
