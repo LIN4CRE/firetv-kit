@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fire TV Ultimate Setup Kit — Zero-Middleman Streaming Stack</title>
+  <meta name="description" content="Turnkey Fire TV & Android TV installer: Stremio, SmartTube, TiviMate, AdGuard DoT, auto-discovery & ExoPlayer fix." />
+  <link rel="icon" type="image/svg+xml" href="assets/logo.svg" />
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #111726;
+      --card-border: #1e293b;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --primary: #ff6b00;
+      --primary-glow: rgba(255, 107, 0, 0.35);
+      --cyan: #00f2fe;
+      --cyan-glow: rgba(0, 242, 254, 0.25);
+      --purple: #8b5cf6;
+      --green: #10b981;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      padding: 0;
+      overflow-x: hidden;
+    }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem 4rem;
+    }
+
+    /* Hero Banner */
+    .banner-wrapper {
+      position: relative;
+      border-radius: 18px;
+      overflow: hidden;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), 0 0 50px var(--primary-glow);
+      border: 1px solid rgba(255, 107, 0, 0.3);
+      margin-bottom: 2.5rem;
+    }
+
+    .banner-wrapper img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    /* Badges Bar */
+    .badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      justify-content: center;
+      margin-bottom: 2.5rem;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.4rem 0.9rem;
+      border-radius: 9999px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      background: rgba(30, 41, 59, 0.7);
+      border: 1px solid var(--card-border);
+      color: #e2e8f0;
+      text-decoration: none;
+      transition: all 0.2s ease;
+    }
+
+    .badge:hover {
+      transform: translateY(-2px);
+      border-color: var(--cyan);
+      box-shadow: 0 4px 12px var(--cyan-glow);
+    }
+
+    .badge-green { background: rgba(16, 185, 129, 0.15); border-color: rgba(16, 185, 129, 0.4); color: #34d399; }
+    .badge-orange { background: rgba(255, 107, 0, 0.15); border-color: rgba(255, 107, 0, 0.4); color: #fb923c; }
+    .badge-cyan { background: rgba(0, 242, 254, 0.15); border-color: rgba(0, 242, 254, 0.4); color: #38bdf8; }
+
+    /* Action Buttons */
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      justify-content: center;
+      margin-bottom: 3.5rem;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.85rem 1.6rem;
+      border-radius: 10px;
+      font-size: 1rem;
+      font-weight: 700;
+      text-decoration: none;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #ff6b00, #ff8c00);
+      color: #fff;
+      box-shadow: 0 4px 20px var(--primary-glow);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 25px rgba(255, 107, 0, 0.5);
+    }
+
+    .btn-secondary {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      color: #fff;
+    }
+
+    .btn-secondary:hover {
+      border-color: var(--cyan);
+      box-shadow: 0 4px 15px var(--cyan-glow);
+      transform: translateY(-2px);
+    }
+
+    /* Section Styling */
+    h2 {
+      font-size: 1.8rem;
+      font-weight: 800;
+      margin-bottom: 1.25rem;
+      text-align: center;
+      letter-spacing: -0.5px;
+      background: linear-gradient(90deg, #fff, #cbd5e1);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .section-desc {
+      text-align: center;
+      color: var(--text-muted);
+      margin-bottom: 2rem;
+      font-size: 1.05rem;
+    }
+
+    /* Downloader Code Cards */
+    .codes-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.5rem;
+      margin-bottom: 3.5rem;
+    }
+
+    .code-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 1.5rem;
+      text-align: center;
+      position: relative;
+      transition: all 0.25s ease;
+      cursor: pointer;
+    }
+
+    .code-card:hover {
+      transform: translateY(-4px);
+      border-color: var(--primary);
+      box-shadow: 0 10px 30px var(--primary-glow);
+    }
+
+    .code-card img {
+      width: 48px;
+      height: 48px;
+      margin-bottom: 0.75rem;
+    }
+
+    .code-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin-bottom: 0.25rem;
+    }
+
+    .code-tag {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-bottom: 1rem;
+    }
+
+    .code-number {
+      font-size: 2.2rem;
+      font-weight: 900;
+      color: var(--primary);
+      letter-spacing: 2px;
+      background: rgba(255, 107, 0, 0.1);
+      border: 1px dashed rgba(255, 107, 0, 0.4);
+      border-radius: 8px;
+      padding: 0.5rem 1rem;
+      margin-bottom: 0.75rem;
+      display: inline-block;
+    }
+
+    .code-tip {
+      font-size: 0.8rem;
+      color: #94a3b8;
+    }
+
+    /* App Checklist Showcase */
+    .app-table-wrapper {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      overflow: hidden;
+      margin-bottom: 3.5rem;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+    }
+
+    th, td {
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--card-border);
+    }
+
+    th {
+      background: #0d121f;
+      color: #cbd5e1;
+      font-weight: 700;
+      font-size: 0.9rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    tr:last-child td { border-bottom: none; }
+
+    tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .app-badge-core {
+      background: rgba(16, 185, 129, 0.2);
+      color: #34d399;
+      padding: 0.2rem 0.6rem;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      font-weight: 700;
+    }
+
+    .app-badge-auto {
+      background: rgba(56, 189, 248, 0.2);
+      color: #38bdf8;
+      padding: 0.2rem 0.6rem;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      font-weight: 700;
+    }
+
+    /* Feature Cards */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 1.5rem;
+      margin-bottom: 3.5rem;
+    }
+
+    .feature-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 1.5rem;
+      transition: all 0.2s ease;
+    }
+
+    .feature-card:hover {
+      border-color: var(--cyan);
+      box-shadow: 0 8px 25px var(--cyan-glow);
+    }
+
+    .feature-icon {
+      font-size: 2rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .feature-card h3 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+      color: #fff;
+    }
+
+    .feature-card p {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    /* Code Block */
+    .code-terminal {
+      background: #05080e;
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 1.25rem;
+      margin-bottom: 3rem;
+      font-family: monospace;
+      font-size: 0.95rem;
+      color: #38bdf8;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.5);
+    }
+
+    .code-terminal span {
+      user-select: all;
+    }
+
+    .copy-btn {
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: #fff;
+      padding: 0.4rem 0.8rem;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .copy-btn:hover {
+      background: var(--cyan);
+      color: #000;
+    }
+
+    /* Toast */
+    #toast {
+      position: fixed;
+      bottom: 2rem;
+      right: 2rem;
+      background: #10b981;
+      color: #fff;
+      padding: 0.75rem 1.5rem;
+      border-radius: 8px;
+      font-weight: 700;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(20px);
+      transition: all 0.3s ease;
+      z-index: 1000;
+    }
+
+    #toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* Footer */
+    footer {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      border-top: 1px solid var(--card-border);
+      padding-top: 2rem;
+    }
+
+    footer a { color: var(--cyan); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <!-- Hero Banner -->
+    <div class="banner-wrapper">
+      <img src="assets/banner.svg" alt="Fire TV Ultimate Setup Kit Banner" />
+    </div>
+
+    <!-- Badges Bar -->
+    <div class="badges">
+      <span class="badge badge-green">✓ 28/28 Automated Tests Passing</span>
+      <span class="badge badge-orange">🔥 Fire OS &bull; Android TV &bull; Google TV</span>
+      <span class="badge badge-cyan">🛡️ AdGuard Private DNS (DoT)</span>
+      <span class="badge">⚖️ MIT Open Source License</span>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="hero-actions">
+      <a href="https://github.com/LIN4CRE/firetv-kit/archive/refs/heads/main.zip" class="btn btn-primary">
+        ⬇️ Download Setup Kit (.ZIP)
+      </a>
+      <a href="https://github.com/LIN4CRE/firetv-kit" class="btn btn-secondary">
+        ⭐ View Repository on GitHub
+      </a>
+    </div>
+
+    <!-- Terminal Quick Command -->
+    <h2>⚡ Quick Install via Git</h2>
+    <p class="section-desc">Run this on any Windows, macOS, or Linux computer on your home Wi-Fi:</p>
+    <div class="code-terminal">
+      <span>git clone https://github.com/LIN4CRE/firetv-kit.git &amp;&amp; cd firetv-kit &amp;&amp; .\setup.bat</span>
+      <button class="copy-btn" onclick="copyText('git clone https://github.com/LIN4CRE/firetv-kit.git &amp;&amp; cd firetv-kit &amp;&amp; .\\setup.bat')">Copy</button>
+    </div>
+
+    <!-- Downloader Codes Section -->
+    <h2>📱 Downloader 5-Digit Shortcodes</h2>
+    <p class="section-desc">Setting up directly on your Fire TV using just the remote? Open the <b>Downloader</b> app and type any code:</p>
+    
+    <div class="codes-grid">
+      <!-- Stremio Card -->
+      <div class="code-card" onclick="copyCode('81044', 'Stremio')">
+        <img src="assets/stremio-logo.svg" alt="Stremio Logo" />
+        <div class="code-title">Stremio</div>
+        <div class="code-tag">Android TV Edition &bull; P2P Streaming</div>
+        <div class="code-number">81044</div>
+        <div class="code-tip">Click to copy shortcode</div>
+      </div>
+
+      <!-- SmartTube Card -->
+      <div class="code-card" onclick="copyCode('28544', 'SmartTube')">
+        <img src="assets/smarttube-logo.svg" alt="SmartTube Logo" />
+        <div class="code-title">SmartTube</div>
+        <div class="code-tag">4K HDR YouTube &bull; SponsorBlock</div>
+        <div class="code-number">28544</div>
+        <div class="code-tip">Click to copy shortcode</div>
+      </div>
+
+      <!-- TiviMate Card -->
+      <div class="code-card" onclick="copyCode('272483', 'TiviMate')">
+        <img src="assets/tivimate-logo.svg" alt="TiviMate Logo" />
+        <div class="code-title">TiviMate</div>
+        <div class="code-tag">IPTV Player &bull; EPG Channel Timeline</div>
+        <div class="code-number">272483</div>
+        <div class="code-tip">Click to copy shortcode</div>
+      </div>
+    </div>
+
+    <!-- App Catalog Table -->
+    <h2>📦 Available Apps in the Checklist</h2>
+    <p class="section-desc">Select the apps you want when you run the automated setup:</p>
+    
+    <div class="app-table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th>App Name</th>
+            <th>Type</th>
+            <th>Status</th>
+            <th>Description &amp; Highlights</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><b>Stremio (Android TV)</b></td>
+            <td>Streaming</td>
+            <td><span class="app-badge-core">Pre-Bundled</span></td>
+            <td>ExoPlayer deadlock fixed, ultra fast torrent profile, movies &amp; shows via Torrentio.</td>
+          </tr>
+          <tr>
+            <td><b>SmartTube (4K HDR)</b></td>
+            <td>YouTube</td>
+            <td><span class="app-badge-core">Pre-Bundled</span></td>
+            <td>Ad-free, SponsorBlock, background playback, 60fps HDR, voice search pre-granted.</td>
+          </tr>
+          <tr>
+            <td><b>TiviMate</b></td>
+            <td>IPTV</td>
+            <td><span class="app-badge-core">Pre-Bundled</span></td>
+            <td>EPG timeline guide, full remote navigation, recording storage permissions pre-granted.</td>
+          </tr>
+          <tr>
+            <td><b>Kodi 21 (Omega)</b></td>
+            <td>Media Center</td>
+            <td><span class="app-badge-auto">Auto-Download</span></td>
+            <td>Modular home theater, local media libraries, community addons.</td>
+          </tr>
+          <tr>
+            <td><b>VLC for Android TV</b></td>
+            <td>Video Player</td>
+            <td><span class="app-badge-auto">Auto-Download</span></td>
+            <td>Universal player for all local USB drives and network shares (SMB/NFS).</td>
+          </tr>
+          <tr>
+            <td><b>Nova Video Player</b></td>
+            <td>Video Player</td>
+            <td><span class="app-badge-auto">Auto-Download</span></td>
+            <td>Open-source player with automatic movie poster &amp; metadata scraping.</td>
+          </tr>
+          <tr>
+            <td><b>RetroArch</b></td>
+            <td>Emulation</td>
+            <td><span class="app-badge-auto">Auto-Download</span></td>
+            <td>All-in-one retro gaming console emulator (NES, SNES, PS1, GBA, N64).</td>
+          </tr>
+          <tr>
+            <td><b>F-Droid App Store</b></td>
+            <td>App Store</td>
+            <td><span class="app-badge-auto">Auto-Download</span></td>
+            <td>Independent open-source application repository for TV.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Features -->
+    <h2>🛡️ Why This Setup Kit Is Different</h2>
+    <p class="section-desc">Engineered for rock-solid stability with zero reliance on background computers:</p>
+
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">🛡️</div>
+        <h3>Zero-Middleman Ad-Blocking</h3>
+        <p>Configures native Android Private DNS over TLS (<code>dns.adguard-dns.com:853</code>). No VPN app to stall your Wi-Fi, and your PC can be powered off.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">⚡</div>
+        <h3>Trailer Bug Permanently Fixed</h3>
+        <p>Disables ExoPlayer <i>Tunnelled Playback</i> to eliminate hardware decoder deadlocks during P2P buffer hesitations. Trailers are never needed again.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">🔍</div>
+        <h3>Dynamic Network Discovery</h3>
+        <p>Zero hardcoded devices. Scans whatever Wi-Fi network you connect to in ~500ms, detects model codes, and presents friendly device names.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">💾</div>
+        <h3>Portable USB Flash Toolkit</h3>
+        <p>Run <code>prepare-usb.bat</code> to create a standalone thumb drive. Flash any TV from any PC or plug directly into a Fire TV Cube / OTG cable.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">🧹</div>
+        <h3>Amazon Telemetry Debloat</h3>
+        <p>Silently disables aggressive retail demos, shopping overlays, and background telemetry while keeping remotes, Alexa, Wi-Fi, and Bluetooth 100% functional.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">🚀</div>
+        <h3>Ultra Fast Torrent Profile</h3>
+        <p>Pre-tunes Stremio's embedded engine with higher peer limits and optimized buffer chunk sizes for instant playback starts.</p>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer>
+      <p>Created with care by <a href="https://github.com/LIN4CRE">David Linacre (LIN4CRE)</a> &bull; Licensed under the MIT License</p>
+      <p style="margin-top: 0.5rem; font-size: 0.8rem;">Repository: <a href="https://github.com/LIN4CRE/firetv-kit">https://github.com/LIN4CRE/firetv-kit</a></p>
+    </footer>
+  </div>
+
+  <div id="toast">Shortcode copied!</div>
+
+  <script>
+    function copyCode(code, name) {
+      navigator.clipboard.writeText(code).then(() => {
+        showToast(`Copied ${name} code: ${code}`);
+      });
+    }
+
+    function copyText(text) {
+      navigator.clipboard.writeText(text).then(() => {
+        showToast('Command copied to clipboard!');
+      });
+    }
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      toast.textContent = msg;
+      toast.classList.add('show');
+      setTimeout(() => {
+        toast.classList.remove('show');
+      }, 2500);
+    }
+  </script>
+</body>
+</html>
