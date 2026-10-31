@@ -1,0 +1,39 @@
+name: CI Test Suite
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  validate-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Run Fire TV Setup Kit Automated Tests
+        shell: powershell
+        run: |
+          & ".\tests\Run-Tests.ps1" -SkipLiveDevice
+
+  validate-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Validate Shell Script Syntax
+        run: |
+          bash -n setup.sh
+          echo "setup.sh passed syntax check"
+
+      - name: Validate Markdown Documentation
+        run: |
+          test -f README.md
+          test -f docs/OPTIMIZATIONS_EXPLAINED.md
+          test -f docs/DOWNLOADER_SHORTCODES.md
+          test -f docs/DIRECT_USB_SETUP.md
+          echo "Documentation files present"

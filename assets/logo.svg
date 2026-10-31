@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b0f19" />
+      <stop offset="50%" stop-color="#1e1b4b" />
+      <stop offset="100%" stop-color="#030712" />
+    </linearGradient>
+
+    <linearGradient id="flame-grad" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#ea580c" />
+      <stop offset="40%" stop-color="#f97316" />
+      <stop offset="70%" stop-color="#fbbf24" />
+      <stop offset="100%" stop-color="#ffffff" />
+    </linearGradient>
+
+    <linearGradient id="border-glow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffedd5" stop-opacity="0.8" />
+      <stop offset="50%" stop-color="#f97316" stop-opacity="0.5" />
+      <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.8" />
+    </linearGradient>
+
+    <filter id="outer-glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="16" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background Squircle -->
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bg-grad)" stroke="url(#border-glow)" stroke-width="8" filter="url(#outer-glow)" />
+
+  <!-- Digital Display TV Frame -->
+  <rect x="64" y="64" width="384" height="384" rx="72" fill="#090d16" stroke="#334155" stroke-width="3" />
+
+  <!-- Glowing Fire TV Flame Core -->
+  <path d="M256 100 C264 165, 345 208, 345 292 C345 368, 292 398, 256 398 C220 398, 167 368, 167 292 C167 232, 217 190, 230 136 C240 118, 253 100, 256 100 Z"
+        fill="url(#flame-grad)" filter="url(#outer-glow)" />
+
+  <!-- Inner Hot White Flame Core -->
+  <path d="M256 208 C262 245, 305 270, 305 316 C305 360, 274 374, 256 374 C238 374, 207 360, 207 316 C207 278, 238 252, 245 220 Z"
+        fill="#ffffff" opacity="0.95" />
+
+  <!-- High-contrast Streaming Play Triangle -->
+  <polygon points="244,286 280,308 244,330" fill="#ea580c" />
+</svg>

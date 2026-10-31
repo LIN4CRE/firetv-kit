@@ -11,7 +11,7 @@ param(
     [switch]$SkipDebloat
 )
 
-$Host.UI.RawUI.WindowTitle = "Fire TV Ultimate Setup Kit (Stremio • SmartTube • TiviMate)"
+$Host.UI.RawUI.WindowTitle = "Fire TV Ultimate Setup Kit (Stremio, SmartTube, TiviMate)"
 $ErrorActionPreference = "Continue"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -34,8 +34,8 @@ if (-not (Test-Path $AdbExe)) {
 function Write-Header {
     Clear-Host
     Write-Host "==========================================================================" -ForegroundColor Cyan
-    Write-Host "       🔥 FIRE TV ULTIMATE SETUP KIT (Stremio • SmartTube • TiviMate)    " -ForegroundColor Yellow
-    Write-Host "          Zero-Middleman • AdGuard DNS • ExoPlayer Optimizations         " -ForegroundColor Green
+    Write-Host "       FIRE TV ULTIMATE SETUP KIT (Stremio * SmartTube * TiviMate)        " -ForegroundColor Yellow
+    Write-Host "          Zero-Middleman * AdGuard DNS * ExoPlayer Optimizations          " -ForegroundColor Green
     Write-Host "==========================================================================" -ForegroundColor Cyan
     Write-Host ""
 }
@@ -86,7 +86,7 @@ function Connect-FireTV {
         }
     }
 
-    $target = "$($DeviceIp):5555"
+    $target = "{0}:5555" -f $DeviceIp
     Write-Host "`n[*] Connecting to Fire TV at $target..." -ForegroundColor Cyan
 
     Invoke-Adb "disconnect" | Out-Null
@@ -117,26 +117,42 @@ function Find-FireTVOnNetwork {
     if (-not $localIp) { return $null }
 
     $base = $localIp.Substring(0, $localIp.LastIndexOf("."))
-    Write-Host "    Subnet detected: $base.1 - $base.254" -ForegroundColor Gray
+    $subnetMsg = "    Subnet detected: {0}.1 - {0}.254" -f $base
+    Write-Host $subnetMsg -ForegroundColor Gray
 
     $foundIps = [System.Collections.Generic.List[string]]::new()
     
-    # Multi-threaded port 5555 probe
-    1..254 | ForEach-Object -Parallel {
-        $ip = "$($using:base).$_"
+    # Rapid non-blocking port 5555 probe compatible with PowerShell 5.1 and 7+
+    $probes = [System.Collections.Generic.List[PSCustomObject]]::new()
+    1..254 | ForEach-Object {
+        $ip = "{0}.{1}" -f $base, $_
         $tcp = New-Object System.Net.Sockets.TcpClient
         try {
             $ar = $tcp.BeginConnect($ip, 5555, $null, $null)
-            $success = $ar.AsyncWaitHandle.WaitOne(200, $false)
-            if ($success -and $tcp.Connected) {
-                $tcp.EndConnect($ar)
-                $ip
+            $probes.Add([PSCustomObject]@{
+                IP = $ip
+                Client = $tcp
+                AsyncResult = $ar
+            })
+        } catch {
+            $tcp.Close()
+        }
+    }
+
+    # Wait up to 300ms for connection handshakes
+    Start-Sleep -Milliseconds 300
+
+    foreach ($p in $probes) {
+        try {
+            if ($p.AsyncResult.IsCompleted -and $p.Client.Connected) {
+                $foundIps.Add($p.IP)
+                $p.Client.EndConnect($p.AsyncResult)
             }
         } catch { }
         finally {
-            $tcp.Close()
+            $p.Client.Close()
         }
-    } -ThrottleLimit 64 | ForEach-Object { $foundIps.Add($_) }
+    }
 
     if ($foundIps.Count -eq 0) {
         Write-Host "    No open ADB devices found on subnet." -ForegroundColor Yellow
@@ -164,7 +180,7 @@ function Install-StreamingApps {
     param([string]$Target)
 
     Write-Host "`n========================================================" -ForegroundColor Cyan
-    Write-Host "           📦 INSTALLING STREAMING APPS                 " -ForegroundColor Yellow
+    Write-Host "           [+] INSTALLING STREAMING APPS                " -ForegroundColor Yellow
     Write-Host "========================================================" -ForegroundColor Cyan
 
     $apps = @(
@@ -218,7 +234,7 @@ function Configure-PrivateDNS {
     param([string]$Target)
 
     Write-Host "`n========================================================" -ForegroundColor Cyan
-    Write-Host "     🛡️ CONFIGURING ADGUARD PRIVATE DNS (Zero-VPN)      " -ForegroundColor Yellow
+    Write-Host "     [+] CONFIGURING ADGUARD PRIVATE DNS (Zero-VPN)     " -ForegroundColor Yellow
     Write-Host "========================================================" -ForegroundColor Cyan
 
     Write-Host "[*] Removing any old VPN or filter wrappers..." -ForegroundColor Cyan
@@ -252,7 +268,7 @@ function Optimize-StremioSettings {
     param([string]$Target)
 
     Write-Host "`n========================================================" -ForegroundColor Cyan
-    Write-Host "   ⚡ OPTIMIZING STREMIO (Trailer Bug Fix & Ultra Speed) " -ForegroundColor Yellow
+    Write-Host "   [+] OPTIMIZING STREMIO (Trailer Bug Fix & Ultra Speed)" -ForegroundColor Yellow
     Write-Host "========================================================" -ForegroundColor Cyan
 
     Write-Host "[*] Launching Stremio to configure settings..." -ForegroundColor Cyan
@@ -314,7 +330,7 @@ function Debloat-FireTV {
     param([string]$Target)
 
     Write-Host "`n========================================================" -ForegroundColor Cyan
-    Write-Host "          🧹 DEBLOATING FIRE TV PERFORMANCE             " -ForegroundColor Yellow
+    Write-Host "          [+] DEBLOATING FIRE TV PERFORMANCE            " -ForegroundColor Yellow
     Write-Host "========================================================" -ForegroundColor Cyan
 
     $bloat = @(
@@ -353,7 +369,7 @@ if ($Express) {
         if (-not $SkipDebloat) { Debloat-FireTV $target }
 
         Write-Host "`n========================================================" -ForegroundColor Green
-        Write-Host "       🎉 ALL TASKS COMPLETED SUCCESSFULLY!             " -ForegroundColor Yellow
+        Write-Host "       [+] ALL TASKS COMPLETED SUCCESSFULLY!             " -ForegroundColor Yellow
         Write-Host "========================================================" -ForegroundColor Green
         Write-Host "Your Fire TV is 100% configured and ready to use." -ForegroundColor White
         Write-Host "No computer or middleman is needed." -ForegroundColor White
