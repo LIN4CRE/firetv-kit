@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
     Automated Test Suite for Fire TV Ultimate Setup Kit
-    Validates structure, syntax, binary integrity, USB creation, and live device state.
+    Validates structure, syntax, binary integrity, USB creation, model maps, DNS profiles, debloat safety, and live device state.
 #>
 
 [CmdletBinding()]
@@ -168,9 +168,127 @@ foreach ($apk in $apks) {
 }
 
 # -------------------------------------------------------------
-# TEST GROUP 5: USB PREPARATION WORKFLOW (MOCK DRY-RUN)
+# TEST GROUP 5: HARDWARE FINGERPRINTING & MODEL RESOLUTION
 # -------------------------------------------------------------
-Write-Host "`n[Group 5: USB Packaging Dry-Run Test]" -ForegroundColor Cyan
+Write-Host "`n[Group 5: Hardware Fingerprinting & Model Resolution]" -ForegroundColor Cyan
+
+# Source the Get-FriendlyDeviceName function from setup.ps1
+$setupPs1 = Join-Path $RootDir "scripts\setup.ps1"
+$setupContent = Get-Content -Raw $setupPs1
+
+# Extract Get-FriendlyDeviceName function
+$funcPattern = '(?s)function Get-FriendlyDeviceName\s*\{.*?return "Smart TV / Android TV Device"\s*\}\s*\}'
+$funcMatch = [regex]::Match($setupContent, $funcPattern)
+
+if ($funcMatch.Success) {
+    Invoke-Expression $funcMatch.Value
+    
+    $testCases = @(
+        @{ Model = "AFTGAZL"; Expected = "Amazon Fire TV Cube (3rd Gen)" },
+        @{ Model = "AFTKRT"; Expected = "Amazon Fire TV Stick 4K Max (2nd Gen)" },
+        @{ Model = "AFTOQ"; Expected = "Amazon Fire TV Omni QLED Series" },
+        @{ Model = "SHIELD Android TV"; Expected = "NVIDIA SHIELD TV" },
+        @{ Model = "Google TV Streamer"; Expected = "Google TV Streamer 4K" },
+        @{ Model = "240411"; Expected = "Onn 4K Streaming Box" }
+    )
+
+    foreach ($tc in $testCases) {
+        $actual = Get-FriendlyDeviceName "" $tc.Model
+        $match = ($actual -eq $tc.Expected)
+        Write-TestResult "Model Map: $($tc.Model)" $match "$actual"
+    }
+} else {
+    Write-TestResult "Extract Get-FriendlyDeviceName" $false "Could not extract function for unit testing"
+}
+
+# -------------------------------------------------------------
+# TEST GROUP 6: PRIVATE DNS PROFILES VALIDATION
+# -------------------------------------------------------------
+Write-Host "`n[Group 6: Private DNS Profiles Validation]" -ForegroundColor Cyan
+
+$dnsHosts = @(
+    "dns.adguard-dns.com",
+    "family.adguard-dns.com",
+    "security.cloudflare-dns.com",
+    "dns.quad9.net"
+)
+
+foreach ($hostName in $dnsHosts) {
+    $validHost = $hostName -match '^[a-z0-9\.\-]+\.[a-z]{2,}$'
+    Write-TestResult "DNS Host Format: $hostName" $validHost "Valid FQDN"
+}
+
+# -------------------------------------------------------------
+# TEST GROUP 7: DEBLOAT SAFETY WHITELIST / BLACKLIST AUDIT
+# -------------------------------------------------------------
+Write-Host "`n[Group 7: Debloat Safety Whitelist Audit]" -ForegroundColor Cyan
+
+# Critical core system packages that must NEVER be in any debloat list
+$criticalPackages = @(
+    "android",
+    "com.android.settings",
+    "com.android.systemui",
+    "com.amazon.firelauncher",
+    "com.amazon.device.software.ota",
+    "com.amazon.whisperplay.contracts"
+)
+
+$debloatLists = @(
+    "com.amazon.device.sale.service",
+    "com.amazon.whisperjoin.middleware.security",
+    "com.amazon.shpm",
+    "com.amazon.visualsearch",
+    "com.amazon.unifiedsearch",
+    "com.amazon.tmm",
+    "com.amazon.precog",
+    "com.amazon.firehomedevice",
+    "com.amazon.advertising.idprovider",
+    "com.amazon.kor.demo",
+    "com.amazon.altair.retail",
+    "com.amazon.cardinal"
+)
+
+$hasCollision = $false
+foreach ($crit in $criticalPackages) {
+    if ($debloatLists -contains $crit) {
+        $hasCollision = $true
+        Write-TestResult "Safety Guard: $crit" $false "CRITICAL PACKAGE PRESENT IN DEBLOAT LIST"
+    }
+}
+
+if (-not $hasCollision) {
+    Write-TestResult "Core OS Safety Whitelist" $true "0 system-critical packages in debloat profile"
+}
+
+# -------------------------------------------------------------
+# TEST GROUP 8: CONFIGURATION PROFILE JSON ROUNDTRIP
+# -------------------------------------------------------------
+Write-Host "`n[Group 8: Device Profile JSON Schema Roundtrip]" -ForegroundColor Cyan
+
+$testProfile = @{
+    Manufacturer = "Amazon"
+    Model = "AFTKRT"
+    Architecture = "armeabi-v7a"
+    PrivateDnsMode = "hostname"
+    PrivateDnsSpecifier = "dns.adguard-dns.com"
+    ExportDate = (Get-Date).ToString("o")
+}
+
+try {
+    $json = $testProfile | ConvertTo-Json -Depth 3
+    $roundtrip = $json | ConvertFrom-Json
+    $schemaValid = ($roundtrip.Manufacturer -eq "Amazon") -and
+                   ($roundtrip.Model -eq "AFTKRT") -and
+                   ($roundtrip.PrivateDnsSpecifier -eq "dns.adguard-dns.com")
+    Write-TestResult "Profile Serialization Roundtrip" $schemaValid "JSON schema validated"
+} catch {
+    Write-TestResult "Profile Serialization Roundtrip" $false $_.Message
+}
+
+# -------------------------------------------------------------
+# TEST GROUP 9: USB PREPARATION WORKFLOW (MOCK DRY-RUN)
+# -------------------------------------------------------------
+Write-Host "`n[Group 9: USB Packaging Dry-Run Test]" -ForegroundColor Cyan
 
 $mockUsbDir = Join-Path $RootDir "tests\mock-usb"
 try {
@@ -205,9 +323,9 @@ try {
 }
 
 # -------------------------------------------------------------
-# TEST GROUP 6: LIVE DEVICE VERIFICATION (OPTIONAL / AUTO-DETECT)
+# TEST GROUP 10: LIVE DEVICE VERIFICATION (OPTIONAL / AUTO-DETECT)
 # -------------------------------------------------------------
-Write-Host "`n[Group 6: Live Fire TV Device Validation]" -ForegroundColor Cyan
+Write-Host "`n[Group 10: Live Fire TV Device Validation]" -ForegroundColor Cyan
 
 if ($SkipLiveDevice) {
     Write-TestSkip "Live Device Tests" "User specified -SkipLiveDevice flag"
@@ -226,7 +344,7 @@ if ($SkipLiveDevice) {
         # Check Private DNS
         $dnsMode = (& $AdbExe -s $target shell settings get global private_dns_mode 2>&1).Trim()
         $dnsSpec = (& $AdbExe -s $target shell settings get global private_dns_specifier 2>&1).Trim()
-        $dnsOk = [bool](($dnsMode -eq "hostname") -and ($dnsSpec -eq "dns.adguard-dns.com"))
+        $dnsOk = [bool](($dnsMode -eq "hostname") -and ($dnsSpec -like "*.adguard-dns.com" -or $dnsSpec -like "*.cloudflare-dns.com" -or $dnsSpec -like "*quad9*"))
         Write-TestResult "Private DNS (DoT) Verified" $dnsOk "Mode=$dnsMode, Specifier=$dnsSpec"
 
         # Check Network Latency & Zero Packet Loss

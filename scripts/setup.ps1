@@ -8,7 +8,15 @@
 param(
     [string]$TargetIP,
     [switch]$Express,
-    [switch]$SkipDebloat
+    [switch]$SkipDebloat,
+    [switch]$Diagnostics,
+    [switch]$RestoreDebloat,
+    [ValidateSet("AdGuard", "AdGuardFamily", "Cloudflare", "Quad9", "Custom")]
+    [string]$DnsProfile = "AdGuard",
+    [ValidateSet("Safe", "Balanced", "Aggressive")]
+    [string]$DebloatLevel = "Balanced",
+    [string]$ExportProfilePath,
+    [string]$ImportProfilePath
 )
 
 $Host.UI.RawUI.WindowTitle = "Fire TV Ultimate Setup Kit"
@@ -34,6 +42,57 @@ if (-not (Test-Path $AdbExe)) {
 # Ensure apks folder exists
 if (-not (Test-Path $ApksDir)) {
     New-Item -ItemType Directory -Force -Path $ApksDir | Out-Null
+}
+
+# DNS Profiles Table
+$Script:DnsProviders = @{
+    "AdGuard"       = @{ Name = "AdGuard Default"; Host = "dns.adguard-dns.com"; Desc = "System-wide ad, tracking & telemetry blocking (zero VPN)" }
+    "AdGuardFamily" = @{ Name = "AdGuard Family"; Host = "family.adguard-dns.com"; Desc = "Ad blocking + adult content & safe search enforcement" }
+    "Cloudflare"    = @{ Name = "Cloudflare Security"; Host = "security.cloudflare-dns.com"; Desc = "1.1.1.2 malware, command & control threat protection" }
+    "Quad9"         = @{ Name = "Quad9 Threat Intel"; Host = "dns.quad9.net"; Desc = "Swiss privacy-respecting threat intelligence" }
+}
+
+# Debloat Tier Definitions
+$Script:DebloatTiers = @{
+    "Safe" = @(
+        "com.amazon.device.sale.service",
+        "com.amazon.whisperjoin.middleware.security",
+        "com.amazon.shpm",
+        "com.amazon.visualsearch",
+        "com.amazon.unifiedsearch",
+        "com.amazon.tmm",
+        "com.amazon.precog"
+    )
+    "Balanced" = @(
+        "com.amazon.device.sale.service",
+        "com.amazon.whisperjoin.middleware.security",
+        "com.amazon.shpm",
+        "com.amazon.visualsearch",
+        "com.amazon.unifiedsearch",
+        "com.amazon.tmm",
+        "com.amazon.precog",
+        "com.amazon.firehomedevice",
+        "com.amazon.advertising.idprovider",
+        "com.amazon.kor.demo",
+        "com.amazon.altair.retail",
+        "com.amazon.cardinal"
+    )
+    "Aggressive" = @(
+        "com.amazon.device.sale.service",
+        "com.amazon.whisperjoin.middleware.security",
+        "com.amazon.shpm",
+        "com.amazon.visualsearch",
+        "com.amazon.unifiedsearch",
+        "com.amazon.tmm",
+        "com.amazon.precog",
+        "com.amazon.firehomedevice",
+        "com.amazon.advertising.idprovider",
+        "com.amazon.kor.demo",
+        "com.amazon.altair.retail",
+        "com.amazon.cardinal",
+        "com.amazon.ftv.screensaver",
+        "com.amazon.buysettings"
+    )
 }
 
 function Write-Header {
@@ -68,23 +127,34 @@ function Get-FriendlyDeviceName {
     param([string]$Manufacturer, [string]$Model)
 
     $modelMap = @{
-        "AFTGAZL" = "Amazon Fire TV Cube (3rd Gen)"
-        "AFTR"    = "Amazon Fire TV Cube (2nd Gen)"
-        "AFTKM"   = "Amazon Fire TV Cube (1st Gen)"
-        "AFTKA"   = "Amazon Fire TV Stick 4K Max (1st Gen)"
-        "AFTKRT"  = "Amazon Fire TV Stick 4K Max (2nd Gen)"
-        "AFTMM"   = "Amazon Fire TV Stick 4K (1st Gen)"
-        "AFTKMST" = "Amazon Fire TV Stick 4K (2nd Gen)"
-        "AFTSSS"  = "Amazon Fire TV Stick Lite"
-        "AFTSS"   = "Amazon Fire TV Stick (3rd Gen)"
-        "AFTT"    = "Amazon Fire TV Stick (2nd Gen)"
-        "AFTB"    = "Amazon Fire TV (1st Gen)"
-        "AFTS"    = "Amazon Fire TV (2nd Gen)"
-        "AFTN"    = "Amazon Fire TV (3rd Gen Pendant)"
-        "AFTBOXE1"= "Toshiba 4K UHD Fire TV Edition"
-        "AFTJM"   = "Insignia 4K UHD Fire TV Edition"
-        "SHIELD Android TV" = "NVIDIA SHIELD TV"
-        "Chromecast" = "Google Chromecast with Google TV"
+        "AFTGAZL"            = "Amazon Fire TV Cube (3rd Gen)"
+        "AFTR"               = "Amazon Fire TV Cube (2nd Gen)"
+        "AFTKM"              = "Amazon Fire TV Cube (1st Gen)"
+        "AFTKA"              = "Amazon Fire TV Stick 4K Max (1st Gen)"
+        "AFTKRT"             = "Amazon Fire TV Stick 4K Max (2nd Gen)"
+        "AFTMM"              = "Amazon Fire TV Stick 4K (1st Gen)"
+        "AFTKMST"            = "Amazon Fire TV Stick 4K (2nd Gen)"
+        "AFTSSS"             = "Amazon Fire TV Stick Lite"
+        "AFTSS"              = "Amazon Fire TV Stick (3rd Gen)"
+        "AFTT"               = "Amazon Fire TV Stick (2nd Gen)"
+        "AFTB"               = "Amazon Fire TV (1st Gen)"
+        "AFTS"               = "Amazon Fire TV (2nd Gen)"
+        "AFTN"               = "Amazon Fire TV (3rd Gen Pendant)"
+        "AFTOQ"              = "Amazon Fire TV Omni QLED Series"
+        "AFTBSS"             = "Amazon Fire TV 2-Series"
+        "AFTBSE"             = "Amazon Fire TV 4-Series"
+        "AFTBOXE1"           = "Toshiba 4K UHD Fire TV Edition"
+        "AFTJM"              = "Insignia 4K UHD Fire TV Edition"
+        "SHIELD Android TV"  = "NVIDIA SHIELD TV"
+        "SHIELD Android TV Pro" = "NVIDIA SHIELD TV Pro"
+        "mdarcy"             = "NVIDIA SHIELD TV Pro (2019)"
+        "sif"                = "NVIDIA SHIELD TV (Tube 2019)"
+        "Chromecast"         = "Google Chromecast with Google TV"
+        "Google TV Streamer" = "Google TV Streamer 4K"
+        "G454V"              = "Chromecast with Google TV (HD)"
+        "GA01919"            = "Chromecast with Google TV (4K)"
+        "240411"             = "Onn 4K Streaming Box"
+        "onn. 4K Pro"        = "Onn 4K Pro Streaming Device"
     }
 
     if ($modelMap.ContainsKey($Model)) {
@@ -106,23 +176,26 @@ function Discover-TVsOnNetwork {
     Write-Host "==========================================================================" -ForegroundColor Cyan
     Write-Host ""
 
-    # Detect active IPv4 network interface
-    $localIp = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { 
-        ($_.IPAddress -like "192.168.*" -or $_.IPAddress -like "10.*" -or $_.IPAddress -like "172.*") -and 
+    # Detect all active private IPv4 network interfaces
+    $adapters = @(Get-NetIPAddress -AddressFamily IPv4 | Where-Object { 
+        ($_.IPAddress -like "192.168.*" -or $_.IPAddress -like "10.*" -or $_.IPAddress -like "172.1[6-9].*" -or $_.IPAddress -like "172.2[0-9].*" -or $_.IPAddress -like "172.3[0-1].*") -and 
         $_.IPAddress -notlike "*.255" -and $_.IPAddress -ne "127.0.0.1"
-    } | Select-Object -First 1).IPAddress
+    })
 
-    if (-not $localIp) {
+    if ($adapters.Count -eq 0) {
         Write-Host "[!] Could not automatically detect local network adapter." -ForegroundColor Yellow
         $ip = Read-Host "Enter Fire TV / Android TV IP address manually"
         return $ip
     }
 
+    # Use first private adapter by default
+    $selectedAdapter = $adapters[0]
+    $localIp = $selectedAdapter.IPAddress
     $base = $localIp.Substring(0, $localIp.LastIndexOf("."))
-    $scanMsg = "[*] Scanning network ({0}.1 - {0}.254) for Android & Fire TVs on port 5555..." -f $base
+    $scanMsg = "[*] Scanning subnet ({0}.1 - {0}.254) for Android & Fire TVs on port 5555..." -f $base
     Write-Host $scanMsg -ForegroundColor Cyan
 
-    # Multi-socket non-blocking port 5555 probe
+    # High-speed non-blocking port 5555 probe
     $probes = [System.Collections.Generic.List[PSCustomObject]]::new()
     1..254 | ForEach-Object {
         $ip = "{0}.{1}" -f $base, $_
@@ -139,8 +212,8 @@ function Discover-TVsOnNetwork {
         }
     }
 
-    # Wait 400ms for connection responses
-    Start-Sleep -Milliseconds 400
+    # Bounded wait for connection responses
+    Start-Sleep -Milliseconds 350
 
     $activeIps = [System.Collections.Generic.List[string]]::new()
     foreach ($p in $probes) {
@@ -251,14 +324,64 @@ function Connect-FireTV {
         
         $model = (Invoke-Adb "-s $target shell getprop ro.product.model").Trim()
         $manuf = (Invoke-Adb "-s $target shell getprop ro.product.manufacturer").Trim()
+        $abi   = (Invoke-Adb "-s $target shell getprop ro.product.cpu.abi").Trim()
         $name  = Get-FriendlyDeviceName $manuf $model
+        $archLabel = if ($abi -match "64") { "64-bit ($abi)" } else { "32-bit ($abi)" }
         
         Write-Host "`n[+] Successfully connected to $name ($target)!" -ForegroundColor Green
+        Write-Host "    Hardware Architecture: $archLabel" -ForegroundColor DarkGray
         return $target
     } else {
         Write-Host "[!] Could not establish ADB connection to $target ($state)." -ForegroundColor Red
         Write-Host "    Make sure you accepted the 'Always allow from this computer' prompt on your TV screen." -ForegroundColor Yellow
         return $null
+    }
+}
+
+function Test-FireTVDiagnostics {
+    param([string]$Target)
+
+    Write-Host "`n========================================================" -ForegroundColor Cyan
+    Write-Host "       FIRE TV SYSTEM & HARDWARE DIAGNOSTICS            " -ForegroundColor Yellow
+    Write-Host "========================================================" -ForegroundColor Cyan
+
+    $disp = Invoke-Adb "-s $Target shell wm size"
+    $density = Invoke-Adb "-s $Target shell wm density"
+    $storage = Invoke-Adb "-s $Target shell df -h /data"
+    $mem = Invoke-Adb "-s $Target shell cat /proc/meminfo"
+    $androidVer = (Invoke-Adb "-s $Target shell getprop ro.build.version.release").Trim()
+    $sdkVer = (Invoke-Adb "-s $Target shell getprop ro.build.version.sdk").Trim()
+    $securityPatch = (Invoke-Adb "-s $Target shell getprop ro.build.version.security_patch").Trim()
+    $thermal = (Invoke-Adb "-s $Target shell cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null").Trim()
+
+    Write-Host "  [+] Display Resolution : $(($disp -replace 'Physical size:\s*', '').Trim())" -ForegroundColor White
+    Write-Host "  [+] Screen Density     : $(($density -replace 'Physical density:\s*', '').Trim()) DPI" -ForegroundColor White
+    Write-Host "  [+] Android OS Release : Android $androidVer (API Level $sdkVer)" -ForegroundColor White
+    Write-Host "  [+] Security Patch     : $securityPatch" -ForegroundColor White
+    
+    # Parse storage
+    $storageLines = $storage.Split("`n") | Where-Object { $_ -match "/data" }
+    if ($storageLines) {
+        $cols = $storageLines[0] -split '\s+'
+        if ($cols.Count -ge 5) {
+            Write-Host "  [+] Data Partition     : Total $($cols[1]), Used $($cols[2]), Free $($cols[3]) ($($cols[4]) used)" -ForegroundColor White
+        }
+    }
+
+    # Parse RAM
+    $memMatchTotal = [regex]::Match($mem, 'MemTotal:\s+(\d+)\s+kB')
+    $memMatchAvail = [regex]::Match($mem, 'MemAvailable:\s+(\d+)\s+kB')
+    if ($memMatchTotal.Success -and $memMatchAvail.Success) {
+        $totalMB = [math]::Round([int64]$memMatchTotal.Groups[1].Value / 1024)
+        $availMB = [math]::Round([int64]$memMatchAvail.Groups[1].Value / 1024)
+        $usedMB = $totalMB - $availMB
+        $pct = [math]::Round(($usedMB / $totalMB) * 100)
+        Write-Host "  [+] System RAM         : Total ${totalMB}MB, Available ${availMB}MB (${pct}% in use)" -ForegroundColor White
+    }
+
+    if ($thermal -and $thermal -match "^\d+$") {
+        $tempC = [math]::Round([int]$thermal / 1000, 1)
+        Write-Host "  [+] Thermal Status     : ${tempC}°C" -ForegroundColor White
     }
 }
 
@@ -403,7 +526,8 @@ function Show-TweaksChecklist {
     $tweaks = @(
         [PSCustomObject]@{ Id = 1; Selected = $true; Name = "AdGuard Private DNS (DoT)"; Desc = "Zero-VPN system-wide ad, tracker & telemetry blocker" },
         [PSCustomObject]@{ Id = 2; Selected = $stremioSelected; Name = "Stremio ExoPlayer Fix"; Desc = "Disable tunneled playback (stops trailer bug) & Ultra Fast profile" },
-        [PSCustomObject]@{ Id = 3; Selected = $true; Name = "Amazon Telemetry Debloat"; Desc = "Disable retail demos, ad metrics & shopping background services" }
+        [PSCustomObject]@{ Id = 3; Selected = $true; Name = "Fire TV Telemetry Debloat"; Desc = "Disable retail demos, ad metrics & shopping background services" },
+        [PSCustomObject]@{ Id = 4; Selected = $true; Name = "System Diagnostics Report"; Desc = "Hardware, screen resolution, RAM and storage telemetry display" }
     )
 
     while ($true) {
@@ -424,10 +548,10 @@ function Show-TweaksChecklist {
         Write-Host ""
         Write-Host "--------------------------------------------------------------------------" -ForegroundColor Cyan
         Write-Host " Commands:" -ForegroundColor Yellow
-        Write-Host "   Type [1-3] to toggle on/off  |  Press [Enter] to start deployment" -ForegroundColor White
+        Write-Host "   Type [1-4] to toggle on/off  |  Press [Enter] to start deployment" -ForegroundColor White
         Write-Host "--------------------------------------------------------------------------" -ForegroundColor Cyan
 
-        $inVal = (Read-Host "Choice [1-3 or Enter]").Trim()
+        $inVal = (Read-Host "Choice [1-4 or Enter]").Trim()
         if ([string]::IsNullOrWhiteSpace($inVal)) {
             break
         } else {
@@ -497,19 +621,27 @@ function Install-SelectedApps {
 }
 
 function Configure-PrivateDNS {
-    param([string]$Target)
+    param(
+        [string]$Target,
+        [string]$Provider = "AdGuard"
+    )
 
     Write-Host "`n========================================================" -ForegroundColor Cyan
-    Write-Host "     CONFIGURING ADGUARD PRIVATE DNS (Zero-VPN)         " -ForegroundColor Yellow
+    Write-Host "     CONFIGURING PRIVATE DNS (Zero-VPN DoT Encryption)  " -ForegroundColor Yellow
     Write-Host "========================================================" -ForegroundColor Cyan
+
+    $profile = $Script:DnsProviders[$Provider]
+    if (-not $profile) {
+        $profile = $Script:DnsProviders["AdGuard"]
+    }
 
     Write-Host "[*] Removing any legacy VPN filters..." -ForegroundColor Cyan
     Invoke-Adb "-s $Target shell am force-stop dnsfilter.android" | Out-Null
     Invoke-Adb "-s $Target shell pm uninstall dnsfilter.android" 2>$null | Out-Null
 
-    Write-Host "[*] Setting native Private DNS over TLS (DoT) to dns.adguard-dns.com..." -ForegroundColor Cyan
+    Write-Host ("[*] Setting Private DNS over TLS (DoT) to {0} ({1})..." -f $profile.Host, $profile.Name) -ForegroundColor Cyan
     Invoke-Adb "-s $Target shell settings put global private_dns_mode hostname" | Out-Null
-    Invoke-Adb "-s $Target shell settings put global private_dns_specifier dns.adguard-dns.com" | Out-Null
+    Invoke-Adb "-s $Target shell settings put global private_dns_specifier $($profile.Host)" | Out-Null
 
     Start-Sleep -Seconds 2
 
@@ -524,7 +656,7 @@ function Configure-PrivateDNS {
     $ping = Invoke-Adb "-s $Target shell ping -c 3 8.8.8.8"
     if ($ping -match "0% packet loss") {
         Write-Host "    [+] Network connection verified! Native Private DNS is active (0% packet loss)." -ForegroundColor Green
-        Write-Host "    [+] Ads and telemetry are now blocked system-wide without any middleman PC or app!" -ForegroundColor Green
+        Write-Host ("    [+] Telemetry and ads blocked via {0} without any proxy or middleman PC!" -f $profile.Name) -ForegroundColor Green
     } else {
         Write-Host "    [!] Warning: Ping did not return 0% packet loss. Check Wi-Fi connection." -ForegroundColor Yellow
     }
@@ -588,46 +720,173 @@ function Optimize-StremioSettings {
 }
 
 function Debloat-FireTV {
-    param([string]$Target)
-
-    Write-Host "`n========================================================" -ForegroundColor Cyan
-    Write-Host "          DEBLOATING FIRE TV PERFORMANCE                " -ForegroundColor Yellow
-    Write-Host "========================================================" -ForegroundColor Cyan
-
-    $bloat = @(
-        "com.amazon.device.sale.service",
-        "com.amazon.whisperjoin.middleware.security",
-        "com.amazon.shpm",
-        "com.amazon.visualsearch",
-        "com.amazon.unifiedsearch",
-        "com.amazon.firehomedevice",
-        "com.amazon.tmm",
-        "com.amazon.precog"
+    param(
+        [string]$Target,
+        [string]$Level = "Balanced"
     )
 
+    Write-Host "`n========================================================" -ForegroundColor Cyan
+    Write-Host ("     DEBLOATING FIRE TV PERFORMANCE (Level: {0})        " -f $Level) -ForegroundColor Yellow
+    Write-Host "========================================================" -ForegroundColor Cyan
+
+    $bloatList = $Script:DebloatTiers[$Level]
+    if (-not $bloatList) {
+        $bloatList = $Script:DebloatTiers["Balanced"]
+    }
+
+    $disabledPackages = [System.Collections.Generic.List[string]]::new()
     $disabledCount = 0
-    foreach ($pkg in $bloat) {
+
+    foreach ($pkg in $bloatList) {
         $res = Invoke-Adb "-s $Target shell pm disable-user --user 0 $pkg"
         if ($res -match "disabled") {
             $disabledCount++
+            $disabledPackages.Add($pkg)
             Write-Host ("    [-] Disabled: {0}" -f $pkg) -ForegroundColor Gray
         }
     }
 
+    # Save state snapshot for instant rollback
+    $cleanIp = ($Target -replace ":.*", "")
+    $snapshotFile = Join-Path $RootDir ("debloat-state-{0}.json" -f $cleanIp)
+    @{
+        TargetIP = $cleanIp
+        Level = $Level
+        Timestamp = (Get-Date).ToString("o")
+        DisabledPackages = $disabledPackages
+    } | ConvertTo-Json -Depth 3 | Set-Content -Path $snapshotFile -Encoding UTF8
+
     Write-Host ("[+] Debloat complete ({0} background telemetry packages disabled)." -f $disabledCount) -ForegroundColor Green
+    Write-Host ("    Rollback snapshot saved to: {0}" -f (Split-Path -Leaf $snapshotFile)) -ForegroundColor DarkGray
     Write-Host "    Core system functions (Wi-Fi, Bluetooth, Audio, Remote, Settings) remain untouched." -ForegroundColor Green
+}
+
+function Restore-FireTVPackages {
+    param(
+        [string]$Target,
+        [string]$StateFile
+    )
+
+    Write-Host "`n========================================================" -ForegroundColor Cyan
+    Write-Host "       RESTORING FIRE TV PACKAGES & SERVICES            " -ForegroundColor Yellow
+    Write-Host "========================================================" -ForegroundColor Cyan
+
+    $packagesToRestore = @()
+
+    if ($StateFile -and (Test-Path $StateFile)) {
+        $state = Get-Content -Raw $StateFile | ConvertFrom-Json
+        $packagesToRestore = $state.DisabledPackages
+    } else {
+        # Fallback to restoring all known debloat packages
+        $packagesToRestore = $Script:DebloatTiers["Aggressive"]
+    }
+
+    $restoredCount = 0
+    foreach ($pkg in $packagesToRestore) {
+        $res = Invoke-Adb "-s $Target shell pm enable --user 0 $pkg"
+        if ($res -match "enabled") {
+            $restoredCount++
+            Write-Host ("    [+] Restored: {0}" -f $pkg) -ForegroundColor Green
+        }
+    }
+
+    Write-Host ("[+] Restore complete ({0} packages re-enabled)." -f $restoredCount) -ForegroundColor Green
+}
+
+function Export-FireTVProfile {
+    param(
+        [string]$Target,
+        [string]$OutPath
+    )
+
+    if (-not $OutPath) {
+        $cleanIp = ($Target -replace ":.*", "")
+        $OutPath = Join-Path $RootDir ("firetv-profile-{0}.json" -f $cleanIp)
+    }
+
+    $dnsMode = Invoke-Adb "-s $Target shell settings get global private_dns_mode"
+    $dnsSpec = Invoke-Adb "-s $Target shell settings get global private_dns_specifier"
+    $model   = Invoke-Adb "-s $Target shell getprop ro.product.model"
+    $manuf   = Invoke-Adb "-s $Target shell getprop ro.product.manufacturer"
+    $abi     = Invoke-Adb "-s $Target shell getprop ro.product.cpu.abi"
+
+    $profile = @{
+        Manufacturer = $manuf.Trim()
+        Model = $model.Trim()
+        Architecture = $abi.Trim()
+        PrivateDnsMode = $dnsMode.Trim()
+        PrivateDnsSpecifier = $dnsSpec.Trim()
+        ExportDate = (Get-Date).ToString("o")
+    }
+
+    $profile | ConvertTo-Json -Depth 3 | Set-Content -Path $OutPath -Encoding UTF8
+    Write-Host ("[+] Device configuration exported to: {0}" -f $OutPath) -ForegroundColor Green
+}
+
+function Import-FireTVProfile {
+    param(
+        [string]$Target,
+        [string]$ProfilePath
+    )
+
+    if (-not (Test-Path $ProfilePath)) {
+        Write-Host ("[!] Profile file not found: {0}" -f $ProfilePath) -ForegroundColor Red
+        return
+    }
+
+    $data = Get-Content -Raw $ProfilePath | ConvertFrom-Json
+    Write-Host ("[+] Importing configuration for {0} {1}..." -f $data.Manufacturer, $data.Model) -ForegroundColor Cyan
+
+    if ($data.PrivateDnsSpecifier) {
+        Invoke-Adb "-s $Target shell settings put global private_dns_mode $($data.PrivateDnsMode)" | Out-Null
+        Invoke-Adb "-s $Target shell settings put global private_dns_specifier $($data.PrivateDnsSpecifier)" | Out-Null
+        Write-Host ("    [+] Restored Private DNS: {0}" -f $data.PrivateDnsSpecifier) -ForegroundColor Green
+    }
 }
 
 # ----------------- MAIN EXECUTION FLOW -----------------
 Write-Header
 
+if ($RestoreDebloat) {
+    $target = Connect-FireTV $TargetIP
+    if ($target) {
+        Restore-FireTVPackages $target
+    }
+    exit 0
+}
+
+if ($Diagnostics) {
+    $target = Connect-FireTV $TargetIP
+    if ($target) {
+        Test-FireTVDiagnostics $target
+    }
+    exit 0
+}
+
+if ($ExportProfilePath) {
+    $target = Connect-FireTV $TargetIP
+    if ($target) {
+        Export-FireTVProfile $target $ExportProfilePath
+    }
+    exit 0
+}
+
+if ($ImportProfilePath) {
+    $target = Connect-FireTV $TargetIP
+    if ($target) {
+        Import-FireTVProfile $target $ImportProfilePath
+    }
+    exit 0
+}
+
 if ($Express) {
     $target = Connect-FireTV $TargetIP
     if ($target) {
-        Configure-PrivateDNS $target
+        Configure-PrivateDNS $target $DnsProfile
         Install-SelectedApps $target
         Optimize-StremioSettings $target
-        if (-not $SkipDebloat) { Debloat-FireTV $target }
+        if (-not $SkipDebloat) { Debloat-FireTV $target $DebloatLevel }
+        Test-FireTVDiagnostics $target
 
         Write-Host "`n========================================================" -ForegroundColor Green
         Write-Host "       ALL TASKS COMPLETED SUCCESSFULLY!                " -ForegroundColor Yellow
@@ -662,7 +921,7 @@ Write-Host ("Target Device: {0}" -f $target) -ForegroundColor White
 # Run DNS if selected
 $dnsTweak = $chosenTweaks | Where-Object { $_.Id -eq 1 -and $_.Selected }
 if ($dnsTweak) {
-    Configure-PrivateDNS $target
+    Configure-PrivateDNS $target $DnsProfile
 }
 
 # Run Apps
@@ -677,7 +936,13 @@ if ($stremioTweak) {
 # Run Debloat if selected
 $debTweak = $chosenTweaks | Where-Object { $_.Id -eq 3 -and $_.Selected }
 if ($debTweak) {
-    Debloat-FireTV $target
+    Debloat-FireTV $target $DebloatLevel
+}
+
+# Run Diagnostics if selected
+$diagTweak = $chosenTweaks | Where-Object { $_.Id -eq 4 -and $_.Selected }
+if ($diagTweak) {
+    Test-FireTVDiagnostics $target
 }
 
 # Wake and return to TV Home screen

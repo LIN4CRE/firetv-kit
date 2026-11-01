@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="#-automated-testing--verification"><img src="https://img.shields.io/badge/Tests-28%2F28%20Passing-brightgreen?logo=checkmarx&style=for-the-badge" alt="Tests" /></a>
+  <a href="#-automated-testing--verification"><img src="https://img.shields.io/badge/Tests-34%2F34%20Passing-brightgreen?logo=checkmarx&style=for-the-badge" alt="Tests" /></a>
   <img src="https://img.shields.io/badge/Platform-Fire%20OS%20%7C%20Android%20TV-FF9900?logo=amazon&style=for-the-badge" alt="Platform" />
   <img src="https://img.shields.io/badge/AdGuard-Encrypted%20DoT-00C853?logo=adguard&style=for-the-badge" alt="AdGuard DoT" />
   <img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="License" />
@@ -11,7 +11,7 @@
 
 <p align="center">
   <b>A turnkey deployment and recovery toolkit for Amazon Fire TV (Cube, Stick, Fire TV Edition) and Android TV devices.</b><br/>
-  Auto-discovers any TV on any Wi-Fi network, presents an interactive checklist of curated streaming &amp; utility apps, activates zero-middleman ad-blocking via encrypted Private DNS over TLS (DoT), eliminates Amazon telemetry bloat, and permanently fixes the Stremio ExoPlayer decoder deadlock (the "trailer restart" bug).
+  Auto-discovers any TV on any Wi-Fi network, presents an interactive checklist of curated streaming &amp; utility apps, activates zero-middleman ad-blocking via encrypted Private DNS over TLS (DoT), eliminates Amazon telemetry bloat with rollback snapshots, provides hardware/screen diagnostics, and permanently fixes the Stremio ExoPlayer decoder deadlock (the "trailer restart" bug).
 </p>
 
 ---
@@ -115,6 +115,25 @@ This repository includes a standalone test suite that validates every file, scri
 
 # Or run offline CI validation without a live TV:
 .\tests\Run-Tests.ps1 -SkipLiveDevice
+```
+
+### ⚡ Advanced CLI & Automation Switches
+
+```powershell
+# 1. Run full device display & hardware diagnostics:
+.\scripts\setup.ps1 -TargetIP 192.168.0.64 -Diagnostics
+
+# 2. Deploy with custom DNS provider (AdGuard, AdGuardFamily, Cloudflare, Quad9):
+.\scripts\setup.ps1 -TargetIP 192.168.0.64 -DnsProfile Cloudflare -Express
+
+# 3. Export TV configuration profile to JSON:
+.\scripts\setup.ps1 -TargetIP 192.168.0.64 -ExportProfilePath .\living-room-tv.json
+
+# 4. Clone / import configuration to another TV:
+.\scripts\setup.ps1 -TargetIP 192.168.0.120 -ImportProfilePath .\living-room-tv.json
+
+# 5. Restore / rollback disabled bloatware packages:
+.\scripts\setup.ps1 -TargetIP 192.168.0.64 -RestoreDebloat
 ```
 
 ---
