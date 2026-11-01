@@ -49,16 +49,27 @@ echo "[*] Scanning local network for Smart TVs with ADB (port 5555)..."
 FOUND_IPS=()
 
 # Determine local IP / subnet across Linux and macOS
-LOCAL_IP=$(ifconfig 2>/dev/null | grep -E 'inet (192\.168\.|10\.|172\.)' | awk '{print $2}' | head -n 1 || ip -4 addr show 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -E '^(192\.168\.|10\.|172\.)' | head -n 1)
+LOCAL_IP=""
+if command -v ip >/dev/null 2>&1; then
+    LOCAL_IP=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{print $7}' | grep -E '^(192\.168\.|10\.|172\.)' | head -n 1)
+    if [ -z "$LOCAL_IP" ]; then
+        LOCAL_IP=$(ip -4 addr show 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1 | grep -E '^(192\.168\.|10\.|172\.)' | head -n 1)
+    fi
+fi
+if [ -z "$LOCAL_IP" ] && command -v ifconfig >/dev/null 2>&1; then
+    LOCAL_IP=$(ifconfig 2>/dev/null | awk '/inet / {print $2}' | sed 's/addr://' | grep -E '^(192\.168\.|10\.|172\.)' | head -n 1)
+fi
 
 if [ -n "$LOCAL_IP" ]; then
     SUBNET=$(echo "$LOCAL_IP" | cut -d'.' -f1-3)
     echo "    Detected subnet: $SUBNET.1 - $SUBNET.254"
     TMP_SCAN=$(mktemp 2>/dev/null || echo "/tmp/firetv_found_ips.txt")
-    for i in $(seq 1 254); do
-        (nc -z -w 1 "$SUBNET.$i" 5555 2>/dev/null && echo "$SUBNET.$i") &
-    done | sort -u > "$TMP_SCAN" 2>/dev/null || true
-    wait
+    (
+        for i in $(seq 1 254); do
+            (nc -z -w 1 "$SUBNET.$i" 5555 2>/dev/null && echo "$SUBNET.$i") &
+        done
+        wait
+    ) | sort -u > "$TMP_SCAN" 2>/dev/null || true
     
     if [ -f "$TMP_SCAN" ]; then
         while IFS= read -r ip; do
@@ -139,9 +150,15 @@ adb -s "$TARGET" shell pm grant org.smarttube.beta android.permission.RECORD_AUD
 adb -s "$TARGET" shell pm grant ar.tvplayer.tv android.permission.WRITE_EXTERNAL_STORAGE >/dev/null 2>&1 || true
 
 echo ""
-read -r -p "Debloat background telemetry and shopping services? [Y/n]: " DEBLOAT_CONFIRM
+echo "Debloat Telemetry & Background Services:"
+echo "  [1] Balanced (Default - telemetry, ads, shopping, retail demos)"
+echo "  [2] Safe (Minimal - essential telemetry & metrics only)"
+echo "  [3] Aggressive (Deep - retail demo, shopping, screensaver, buyer services)"
+echo "  [N] Skip debloat"
+read -r -p "Select debloat tier [1/2/3/N, default 1]: " DEBLOAT_CONFIRM
+
 if [[ ! "$DEBLOAT_CONFIRM" =~ ^[Nn] ]]; then
-    echo "[*] Disabling Amazon telemetry and ad services..."
+    echo "[*] Disabling background telemetry and services..."
     BLOAT=(
         "com.amazon.device.sale.service"
         "com.amazon.whisperjoin.middleware.security"
@@ -150,12 +167,46 @@ if [[ ! "$DEBLOAT_CONFIRM" =~ ^[Nn] ]]; then
         "com.amazon.unifiedsearch"
         "com.amazon.tmm"
         "com.amazon.precog"
-        "com.amazon.firehomedevice"
     )
+    if [ "$DEBLOAT_CONFIRM" != "2" ]; then
+        BLOAT+=(
+            "com.amazon.firehomedevice"
+            "com.amazon.advertising.idprovider"
+            "com.amazon.kor.demo"
+            "com.amazon.altair.retail"
+            "com.amazon.cardinal"
+        )
+    fi
+    if [ "$DEBLOAT_CONFIRM" = "3" ]; then
+        BLOAT+=(
+            "com.amazon.ftv.screensaver"
+            "com.amazon.buysettings"
+        )
+    fi
     for pkg in "${BLOAT[@]}"; do
         adb -s "$TARGET" shell pm disable-user --user 0 "$pkg" 2>/dev/null || true
     done
-    echo "[+] Telemetry debloat completed."
+    echo "[+] Telemetry debloat completed (${#BLOAT[@]} services disabled)."
+fi
+
+echo ""
+echo "=========================================================================="
+echo "       FIRE TV SYSTEM & HARDWARE DIAGNOSTICS"
+echo "=========================================================================="
+DISP=$(adb -s "$TARGET" shell wm size 2>/dev/null | grep -oE '[0-9]+x[0-9]+' | head -n 1)
+DENS=$(adb -s "$TARGET" shell wm density 2>/dev/null | grep -oE '[0-9]+' | head -n 1)
+DATA_PART=$(adb -s "$TARGET" shell df -h /data 2>/dev/null | grep '/data' | awk '{print "Total " $2 ", Used " $3 ", Free " $4 " (" $5 " used)"}')
+MEM_INFO=$(adb -s "$TARGET" shell cat /proc/meminfo 2>/dev/null)
+MEM_TOT=$(echo "$MEM_INFO" | grep 'MemTotal:' | awk '{printf "%.0f", $2/1024}')
+MEM_AVL=$(echo "$MEM_INFO" | grep 'MemAvailable:' | awk '{printf "%.0f", $2/1024}')
+
+[ -n "$DISP" ] && echo "  [+] Display Resolution : $DISP"
+[ -n "$DENS" ] && echo "  [+] Screen Density     : $DENS DPI"
+[ -n "$DATA_PART" ] && echo "  [+] Data Partition     : $DATA_PART"
+if [ -n "$MEM_TOT" ] && [ -n "$MEM_AVL" ] && [ "$MEM_TOT" -gt 0 ]; then
+    MEM_USED=$((MEM_TOT - MEM_AVL))
+    MEM_PCT=$((MEM_USED * 100 / MEM_TOT))
+    echo "  [+] System RAM         : Total ${MEM_TOT}MB, Available ${MEM_AVL}MB (${MEM_PCT}% in use)"
 fi
 
 echo ""

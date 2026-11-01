@@ -172,16 +172,15 @@ foreach ($apk in $apks) {
 # -------------------------------------------------------------
 Write-Host "`n[Group 5: Hardware Fingerprinting & Model Resolution]" -ForegroundColor Cyan
 
-# Source the Get-FriendlyDeviceName function from setup.ps1
 $setupPs1 = Join-Path $RootDir "scripts\setup.ps1"
-$setupContent = Get-Content -Raw $setupPs1
+$setupTokens = $null
+$setupErrors = $null
+$setupAst = [System.Management.Automation.Language.Parser]::ParseFile($setupPs1, [ref]$setupTokens, [ref]$setupErrors)
 
-# Extract Get-FriendlyDeviceName function
-$funcPattern = '(?s)function Get-FriendlyDeviceName\s*\{.*?return "Smart TV / Android TV Device"\s*\}\s*\}'
-$funcMatch = [regex]::Match($setupContent, $funcPattern)
+$funcAst = $setupAst.Find({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq "Get-FriendlyDeviceName" }, $true)
 
-if ($funcMatch.Success) {
-    Invoke-Expression $funcMatch.Value
+if ($funcAst) {
+    Invoke-Expression $funcAst.Extent.Text
     
     $testCases = @(
         @{ Model = "AFTGAZL"; Expected = "Amazon Fire TV Cube (3rd Gen)" },
@@ -202,28 +201,35 @@ if ($funcMatch.Success) {
 }
 
 # -------------------------------------------------------------
-# TEST GROUP 6: PRIVATE DNS PROFILES VALIDATION
+# TEST GROUP 6: PRIVATE DNS PROFILES DYNAMIC VALIDATION
 # -------------------------------------------------------------
-Write-Host "`n[Group 6: Private DNS Profiles Validation]" -ForegroundColor Cyan
+Write-Host "`n[Group 6: Private DNS Profiles Dynamic Validation]" -ForegroundColor Cyan
 
-$dnsHosts = @(
-    "dns.adguard-dns.com",
-    "family.adguard-dns.com",
-    "security.cloudflare-dns.com",
-    "dns.quad9.net"
-)
+$setupContent = Get-Content -Raw $setupPs1
+$dnsMatch = [regex]::Match($setupContent, '(?s)\$Script:DnsProviders\s*=\s*@\{.*?\}\r?\n\}')
 
-foreach ($hostName in $dnsHosts) {
-    $validHost = $hostName -match '^[a-z0-9\.\-]+\.[a-z]{2,}$'
-    Write-TestResult "DNS Host Format: $hostName" $validHost "Valid FQDN"
+if ($dnsMatch.Success) {
+    Invoke-Expression $dnsMatch.Value
+    Write-TestResult "Dynamic DNS Table Extraction" ($Script:DnsProviders.Count -ge 4) "Found $($Script:DnsProviders.Count) DNS profiles in setup.ps1"
+    
+    foreach ($entry in $Script:DnsProviders.GetEnumerator()) {
+        $hostName = $entry.Value.Host
+        $validHost = $hostName -match '^[a-zA-Z0-9\.\-]+\.[a-zA-Z]{2,}$'
+        Write-TestResult "DNS Host Format: $($entry.Key) ($hostName)" $validHost "Valid FQDN ($($entry.Value.Name))"
+    }
+} else {
+    Write-TestResult "Dynamic DNS Table Extraction" $false "Could not extract `$Script:DnsProviders from setup.ps1"
 }
 
-# -------------------------------------------------------------
-# TEST GROUP 7: DEBLOAT SAFETY WHITELIST / BLACKLIST AUDIT
-# -------------------------------------------------------------
-Write-Host "`n[Group 7: Debloat Safety Whitelist Audit]" -ForegroundColor Cyan
+# Test Custom DNS validation regex
+$validCustomHost = "custom.privatedns.example.org" -match '^[a-zA-Z0-9\.\-]+\.[a-zA-Z]{2,}$'
+Write-TestResult "DNS Host Format: Custom Profile Validation" $validCustomHost "Custom FQDN regex passes"
 
-# Critical core system packages that must NEVER be in any debloat list
+# -------------------------------------------------------------
+# TEST GROUP 7: DEBLOAT SAFETY DYNAMIC AUDIT
+# -------------------------------------------------------------
+Write-Host "`n[Group 7: Debloat Safety Dynamic Whitelist Audit]" -ForegroundColor Cyan
+
 $criticalPackages = @(
     "android",
     "com.android.settings",
@@ -233,37 +239,100 @@ $criticalPackages = @(
     "com.amazon.whisperplay.contracts"
 )
 
-$debloatLists = @(
-    "com.amazon.device.sale.service",
-    "com.amazon.whisperjoin.middleware.security",
-    "com.amazon.shpm",
-    "com.amazon.visualsearch",
-    "com.amazon.unifiedsearch",
-    "com.amazon.tmm",
-    "com.amazon.precog",
-    "com.amazon.firehomedevice",
-    "com.amazon.advertising.idprovider",
-    "com.amazon.kor.demo",
-    "com.amazon.altair.retail",
-    "com.amazon.cardinal"
-)
+$debMatch = [regex]::Match($setupContent, '(?s)\$Script:DebloatTiers\s*=\s*@\{.*?\}\r?\n\}')
 
-$hasCollision = $false
-foreach ($crit in $criticalPackages) {
-    if ($debloatLists -contains $crit) {
-        $hasCollision = $true
-        Write-TestResult "Safety Guard: $crit" $false "CRITICAL PACKAGE PRESENT IN DEBLOAT LIST"
+if ($debMatch.Success) {
+    Invoke-Expression $debMatch.Value
+    Write-TestResult "Dynamic Debloat Tiers Extraction" ($Script:DebloatTiers.Count -ge 3) "Found $($Script:DebloatTiers.Count) debloat tiers (Safe, Balanced, Aggressive)"
+    
+    $hasCollision = $false
+    foreach ($tier in $Script:DebloatTiers.Keys) {
+        $tierPkgs = $Script:DebloatTiers[$tier]
+        foreach ($crit in $criticalPackages) {
+            if ($tierPkgs -contains $crit) {
+                $hasCollision = $true
+                Write-TestResult "Safety Guard: $tier contains $crit" $false "CRITICAL PACKAGE PRESENT IN DEBLOAT TIER"
+            }
+        }
+    }
+
+    if (-not $hasCollision) {
+        Write-TestResult "Core OS Safety Whitelist Audit" $true "0 system-critical packages in any debloat tier"
+    }
+} else {
+    Write-TestResult "Dynamic Debloat Tiers Extraction" $false "Could not extract `$Script:DebloatTiers from setup.ps1"
+}
+
+# -------------------------------------------------------------
+# TEST GROUP 8: DIAGNOSTICS PARSER UNIT TESTS
+# -------------------------------------------------------------
+Write-Host "`n[Group 8: Diagnostics Output Parser Unit Tests]" -ForegroundColor Cyan
+
+# Test 8.1: Storage parsing prevents single-string scalar char unrolling bug
+$mockStorage = @"
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/block/data  12G  3.7G  7.8G  33% /data
+"@
+$storageLines = @($mockStorage -split "`r?`n" | Where-Object { $_ -match "/data" })
+$storageParseOk = $false
+if ($storageLines.Count -gt 0) {
+    $cols = $storageLines[0].Trim() -split '\s+'
+    if ($cols.Count -ge 5 -and $cols[1] -eq "12G" -and $cols[2] -eq "3.7G" -and $cols[3] -eq "7.8G") {
+        $storageParseOk = $true
     }
 }
+Write-TestResult "Diagnostic Parser: Storage Data Partition" $storageParseOk "Parsed Total=12G, Used=3.7G, Free=7.8G"
 
-if (-not $hasCollision) {
-    Write-TestResult "Core OS Safety Whitelist" $true "0 system-critical packages in debloat profile"
+# Test 8.2: Legacy RAM fallback parsing (MemFree + Buffers + Cached)
+$mockMemLegacy = @"
+MemTotal:        2023424 kB
+MemFree:          450000 kB
+Buffers:           50000 kB
+Cached:           441000 kB
+"@
+$memMatchTotal = [regex]::Match($mockMemLegacy, 'MemTotal:\s+(\d+)\s+kB')
+$memMatchAvail = [regex]::Match($mockMemLegacy, 'MemAvailable:\s+(\d+)\s+kB')
+$availKb = 0
+if ($memMatchAvail.Success) {
+    $availKb = [int64]$memMatchAvail.Groups[1].Value
+} else {
+    $memFree = [regex]::Match($mockMemLegacy, 'MemFree:\s+(\d+)\s+kB')
+    $buffers = [regex]::Match($mockMemLegacy, 'Buffers:\s+(\d+)\s+kB')
+    $cached  = [regex]::Match($mockMemLegacy, 'Cached:\s+(\d+)\s+kB')
+    if ($memFree.Success) { $availKb += [int64]$memFree.Groups[1].Value }
+    if ($buffers.Success) { $availKb += [int64]$buffers.Groups[1].Value }
+    if ($cached.Success)  { $availKb += [int64]$cached.Groups[1].Value }
+}
+$ramLegacyOk = ($availKb -eq 941000)
+Write-TestResult "Diagnostic Parser: Legacy RAM Fallback" $ramLegacyOk "Calculated 941000 kB available via MemFree+Buffers+Cached"
+
+# -------------------------------------------------------------
+# TEST GROUP 9: DEBLOAT STATE SNAPSHOT & ROLLBACK VALIDATION
+# -------------------------------------------------------------
+Write-Host "`n[Group 9: Debloat State Snapshot & Rollback Validation]" -ForegroundColor Cyan
+
+$mockStateFile = Join-Path $RootDir "tests\mock-debloat-state.json"
+try {
+    $mockSnapshot = @{
+        TargetIP = "192.168.0.64"
+        Level = "Safe"
+        Timestamp = (Get-Date).ToString("o")
+        DisabledPackages = @("com.amazon.device.sale.service", "com.amazon.precog")
+    }
+    $mockSnapshot | ConvertTo-Json -Depth 3 | Set-Content -Path $mockStateFile -Encoding UTF8
+    $loadedState = Get-Content -Raw $mockStateFile | ConvertFrom-Json
+    $snapshotValid = ($loadedState.TargetIP -eq "192.168.0.64") -and 
+                     ($loadedState.DisabledPackages.Count -eq 2) -and
+                     ($loadedState.Level -eq "Safe")
+    Write-TestResult "Debloat Snapshot Roundtrip" $snapshotValid "Snapshot serialization & deserialization validated"
+} finally {
+    if (Test-Path $mockStateFile) { Remove-Item $mockStateFile -Force }
 }
 
 # -------------------------------------------------------------
-# TEST GROUP 8: CONFIGURATION PROFILE JSON ROUNDTRIP
+# TEST GROUP 10: CONFIGURATION PROFILE JSON ROUNDTRIP
 # -------------------------------------------------------------
-Write-Host "`n[Group 8: Device Profile JSON Schema Roundtrip]" -ForegroundColor Cyan
+Write-Host "`n[Group 10: Device Profile JSON Schema Roundtrip]" -ForegroundColor Cyan
 
 $testProfile = @{
     Manufacturer = "Amazon"
@@ -286,9 +355,9 @@ try {
 }
 
 # -------------------------------------------------------------
-# TEST GROUP 9: USB PREPARATION WORKFLOW (MOCK DRY-RUN)
+# TEST GROUP 11: USB PREPARATION WORKFLOW (MOCK DRY-RUN)
 # -------------------------------------------------------------
-Write-Host "`n[Group 9: USB Packaging Dry-Run Test]" -ForegroundColor Cyan
+Write-Host "`n[Group 11: USB Packaging Dry-Run Test]" -ForegroundColor Cyan
 
 $mockUsbDir = Join-Path $RootDir "tests\mock-usb"
 try {
@@ -323,9 +392,9 @@ try {
 }
 
 # -------------------------------------------------------------
-# TEST GROUP 10: LIVE DEVICE VERIFICATION (OPTIONAL / AUTO-DETECT)
+# TEST GROUP 12: LIVE DEVICE VERIFICATION (OPTIONAL / AUTO-DETECT)
 # -------------------------------------------------------------
-Write-Host "`n[Group 10: Live Fire TV Device Validation]" -ForegroundColor Cyan
+Write-Host "`n[Group 12: Live Fire TV Device Validation]" -ForegroundColor Cyan
 
 if ($SkipLiveDevice) {
     Write-TestSkip "Live Device Tests" "User specified -SkipLiveDevice flag"

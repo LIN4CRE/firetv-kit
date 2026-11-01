@@ -13,8 +13,10 @@ param(
     [switch]$RestoreDebloat,
     [ValidateSet("AdGuard", "AdGuardFamily", "Cloudflare", "Quad9", "Custom")]
     [string]$DnsProfile = "AdGuard",
+    [string]$CustomDnsHost,
     [ValidateSet("Safe", "Balanced", "Aggressive")]
     [string]$DebloatLevel = "Balanced",
+    [string]$DebloatStatePath,
     [string]$ExportProfilePath,
     [string]$ImportProfilePath
 )
@@ -28,14 +30,23 @@ $ToolsDir  = Join-Path $RootDir "tools"
 $ApksDir   = Join-Path $RootDir "apks"
 $AdbExe    = Join-Path $ToolsDir "adb.exe"
 
-# Fallback if adb is in path or in tv-debloat
+# Fallback if adb is in path or sibling directories
 if (-not (Test-Path $AdbExe)) {
-    $FallbackAdb = "C:\Users\David\.gemini\antigravity\scratch\tv-debloat\platform-tools\adb.exe"
-    if (Test-Path $FallbackAdb) {
-        $AdbExe = $FallbackAdb
+    $SysAdb = Get-Command adb -ErrorAction SilentlyContinue
+    if ($SysAdb) {
+        $AdbExe = $SysAdb.Source
     } else {
-        $SysAdb = Get-Command adb -ErrorAction SilentlyContinue
-        if ($SysAdb) { $AdbExe = $SysAdb.Source }
+        $parentDir = Split-Path -Parent $RootDir
+        $candidatePaths = @(
+            (Join-Path $parentDir "platform-tools\adb.exe"),
+            (Join-Path $parentDir "tv-debloat\platform-tools\adb.exe")
+        )
+        foreach ($cp in $candidatePaths) {
+            if (Test-Path $cp) {
+                $AdbExe = $cp
+                break
+            }
+        }
     }
 }
 
@@ -176,21 +187,34 @@ function Discover-TVsOnNetwork {
     Write-Host "==========================================================================" -ForegroundColor Cyan
     Write-Host ""
 
-    # Detect all active private IPv4 network interfaces
-    $adapters = @(Get-NetIPAddress -AddressFamily IPv4 | Where-Object { 
-        ($_.IPAddress -like "192.168.*" -or $_.IPAddress -like "10.*" -or $_.IPAddress -like "172.1[6-9].*" -or $_.IPAddress -like "172.2[0-9].*" -or $_.IPAddress -like "172.3[0-1].*") -and 
-        $_.IPAddress -notlike "*.255" -and $_.IPAddress -ne "127.0.0.1"
-    })
+    # Detect active private IPv4 network interfaces prioritizing active default gateway
+    $detectedIps = [System.Collections.Generic.List[string]]::new()
+    $activeConfigs = Get-NetIPConfiguration -ErrorAction SilentlyContinue | Where-Object { $_.IPv4DefaultGateway -and $_.IPv4Address }
+    if ($activeConfigs) {
+        foreach ($cfg in $activeConfigs) {
+            foreach ($ipObj in $cfg.IPv4Address) {
+                if ($ipObj.IPAddress -and $ipObj.IPAddress -notlike "169.254.*" -and $ipObj.IPAddress -ne "127.0.0.1") {
+                    $detectedIps.Add($ipObj.IPAddress)
+                }
+            }
+        }
+    }
+    if ($detectedIps.Count -eq 0) {
+        $adapters = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { 
+            ($_.IPAddress -like "192.168.*" -or $_.IPAddress -like "10.*" -or $_.IPAddress -like "172.1[6-9].*" -or $_.IPAddress -like "172.2[0-9].*" -or $_.IPAddress -like "172.3[0-1].*") -and 
+            $_.IPAddress -notlike "*.255" -and $_.IPAddress -ne "127.0.0.1"
+        })
+        foreach ($a in $adapters) { $detectedIps.Add($a.IPAddress) }
+    }
 
-    if ($adapters.Count -eq 0) {
+    if ($detectedIps.Count -eq 0) {
         Write-Host "[!] Could not automatically detect local network adapter." -ForegroundColor Yellow
         $ip = Read-Host "Enter Fire TV / Android TV IP address manually"
         return $ip
     }
 
-    # Use first private adapter by default
-    $selectedAdapter = $adapters[0]
-    $localIp = $selectedAdapter.IPAddress
+    # Use first active gateway / private adapter
+    $localIp = $detectedIps[0]
     $base = $localIp.Substring(0, $localIp.LastIndexOf("."))
     $scanMsg = "[*] Scanning subnet ({0}.1 - {0}.254) for Android & Fire TVs on port 5555..." -f $base
     Write-Host $scanMsg -ForegroundColor Cyan
@@ -212,8 +236,20 @@ function Discover-TVsOnNetwork {
         }
     }
 
-    # Bounded wait for connection responses
-    Start-Sleep -Milliseconds 350
+    # Adaptive bounded wait for connection responses (up to 600ms, early exit after 300ms if found)
+    $scanSw = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($scanSw.ElapsedMilliseconds -lt 600) {
+        $anyFound = $false
+        foreach ($p in $probes) {
+            if ($p.AsyncResult.IsCompleted -and $p.Client.Connected) {
+                $anyFound = $true
+                break
+            }
+        }
+        if ($anyFound -and $scanSw.ElapsedMilliseconds -ge 300) { break }
+        Start-Sleep -Milliseconds 40
+    }
+    $scanSw.Stop()
 
     $activeIps = [System.Collections.Generic.List[string]]::new()
     foreach ($p in $probes) {
@@ -354,26 +390,47 @@ function Test-FireTVDiagnostics {
     $securityPatch = (Invoke-Adb "-s $Target shell getprop ro.build.version.security_patch").Trim()
     $thermal = (Invoke-Adb "-s $Target shell cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null").Trim()
 
-    Write-Host "  [+] Display Resolution : $(($disp -replace 'Physical size:\s*', '').Trim())" -ForegroundColor White
-    Write-Host "  [+] Screen Density     : $(($density -replace 'Physical density:\s*', '').Trim()) DPI" -ForegroundColor White
+    # Sanitize display resolution
+    $dispClean = ($disp -split "`r?`n" | ForEach-Object { $_ -replace 'Physical size:\s*', '' } | Where-Object { $_ -match '\d+x\d+' } | Select-Object -First 1)
+    if (-not $dispClean) { $dispClean = ($disp -replace 'Physical size:\s*', '').Trim() }
+
+    $densClean = ($density -split "`r?`n" | ForEach-Object { $_ -replace 'Physical density:\s*', '' } | Where-Object { $_ -match '\d+' } | Select-Object -First 1)
+    if (-not $densClean) { $densClean = ($density -replace 'Physical density:\s*', '').Trim() }
+
+    Write-Host "  [+] Display Resolution : $dispClean" -ForegroundColor White
+    Write-Host "  [+] Screen Density     : $densClean DPI" -ForegroundColor White
     Write-Host "  [+] Android OS Release : Android $androidVer (API Level $sdkVer)" -ForegroundColor White
-    Write-Host "  [+] Security Patch     : $securityPatch" -ForegroundColor White
+    if ($securityPatch) {
+        Write-Host "  [+] Security Patch     : $securityPatch" -ForegroundColor White
+    }
     
-    # Parse storage
-    $storageLines = $storage.Split("`n") | Where-Object { $_ -match "/data" }
-    if ($storageLines) {
-        $cols = $storageLines[0] -split '\s+'
+    # Parse storage (wrap in array to prevent single-string scalar indexing bug)
+    $storageLines = @($storage -split "`r?`n" | Where-Object { $_ -match "/data" })
+    if ($storageLines.Count -gt 0) {
+        $cols = $storageLines[0].Trim() -split '\s+'
         if ($cols.Count -ge 5) {
             Write-Host "  [+] Data Partition     : Total $($cols[1]), Used $($cols[2]), Free $($cols[3]) ($($cols[4]) used)" -ForegroundColor White
         }
     }
 
-    # Parse RAM
+    # Parse RAM with MemAvailable or MemFree+Buffers+Cached fallback for older kernels
     $memMatchTotal = [regex]::Match($mem, 'MemTotal:\s+(\d+)\s+kB')
     $memMatchAvail = [regex]::Match($mem, 'MemAvailable:\s+(\d+)\s+kB')
-    if ($memMatchTotal.Success -and $memMatchAvail.Success) {
+    $availKb = 0
+    if ($memMatchAvail.Success) {
+        $availKb = [int64]$memMatchAvail.Groups[1].Value
+    } else {
+        $memFree = [regex]::Match($mem, 'MemFree:\s+(\d+)\s+kB')
+        $buffers = [regex]::Match($mem, 'Buffers:\s+(\d+)\s+kB')
+        $cached  = [regex]::Match($mem, 'Cached:\s+(\d+)\s+kB')
+        if ($memFree.Success) { $availKb += [int64]$memFree.Groups[1].Value }
+        if ($buffers.Success) { $availKb += [int64]$buffers.Groups[1].Value }
+        if ($cached.Success)  { $availKb += [int64]$cached.Groups[1].Value }
+    }
+
+    if ($memMatchTotal.Success -and $availKb -gt 0) {
         $totalMB = [math]::Round([int64]$memMatchTotal.Groups[1].Value / 1024)
-        $availMB = [math]::Round([int64]$memMatchAvail.Groups[1].Value / 1024)
+        $availMB = [math]::Round($availKb / 1024)
         $usedMB = $totalMB - $availMB
         $pct = [math]::Round(($usedMB / $totalMB) * 100)
         Write-Host "  [+] System RAM         : Total ${totalMB}MB, Available ${availMB}MB (${pct}% in use)" -ForegroundColor White
@@ -623,25 +680,47 @@ function Install-SelectedApps {
 function Configure-PrivateDNS {
     param(
         [string]$Target,
-        [string]$Provider = "AdGuard"
+        [string]$Provider = "AdGuard",
+        [string]$CustomHost
     )
 
     Write-Host "`n========================================================" -ForegroundColor Cyan
     Write-Host "     CONFIGURING PRIVATE DNS (Zero-VPN DoT Encryption)  " -ForegroundColor Yellow
     Write-Host "========================================================" -ForegroundColor Cyan
 
-    $profile = $Script:DnsProviders[$Provider]
-    if (-not $profile) {
-        $profile = $Script:DnsProviders["AdGuard"]
+    $dnsHost = ""
+    $dnsName = ""
+
+    if ($Provider -eq "Custom") {
+        $candidateHost = if ($CustomHost) { $CustomHost } else { $CustomDnsHost }
+        if ([string]::IsNullOrWhiteSpace($candidateHost)) {
+            $candidateHost = Read-Host "Enter custom Private DNS over TLS hostname (e.g., custom.dns.example.com)"
+        }
+        if ($candidateHost -match '^[a-zA-Z0-9\.\-]+\.[a-zA-Z]{2,}$') {
+            $dnsHost = $candidateHost.Trim()
+            $dnsName = "Custom Provider ($dnsHost)"
+        } else {
+            Write-Host "[!] Invalid DNS hostname provided. Falling back to AdGuard Default." -ForegroundColor Yellow
+            $profile = $Script:DnsProviders["AdGuard"]
+            $dnsHost = $profile.Host
+            $dnsName = $profile.Name
+        }
+    } else {
+        $profile = $Script:DnsProviders[$Provider]
+        if (-not $profile) {
+            $profile = $Script:DnsProviders["AdGuard"]
+        }
+        $dnsHost = $profile.Host
+        $dnsName = $profile.Name
     }
 
     Write-Host "[*] Removing any legacy VPN filters..." -ForegroundColor Cyan
     Invoke-Adb "-s $Target shell am force-stop dnsfilter.android" | Out-Null
     Invoke-Adb "-s $Target shell pm uninstall dnsfilter.android" 2>$null | Out-Null
 
-    Write-Host ("[*] Setting Private DNS over TLS (DoT) to {0} ({1})..." -f $profile.Host, $profile.Name) -ForegroundColor Cyan
+    Write-Host ("[*] Setting Private DNS over TLS (DoT) to {0} ({1})..." -f $dnsHost, $dnsName) -ForegroundColor Cyan
     Invoke-Adb "-s $Target shell settings put global private_dns_mode hostname" | Out-Null
-    Invoke-Adb "-s $Target shell settings put global private_dns_specifier $($profile.Host)" | Out-Null
+    Invoke-Adb "-s $Target shell settings put global private_dns_specifier $dnsHost" | Out-Null
 
     Start-Sleep -Seconds 2
 
@@ -771,13 +850,29 @@ function Restore-FireTVPackages {
     Write-Host "       RESTORING FIRE TV PACKAGES & SERVICES            " -ForegroundColor Yellow
     Write-Host "========================================================" -ForegroundColor Cyan
 
+    $cleanIp = ($Target -replace ":.*", "")
+    if (-not $StateFile) {
+        $autoSnapshot = Join-Path $RootDir ("debloat-state-{0}.json" -f $cleanIp)
+        if (Test-Path $autoSnapshot) {
+            $StateFile = $autoSnapshot
+            Write-Host ("[*] Auto-detected debloat snapshot: {0}" -f (Split-Path -Leaf $autoSnapshot)) -ForegroundColor Cyan
+        }
+    }
+
     $packagesToRestore = @()
 
     if ($StateFile -and (Test-Path $StateFile)) {
-        $state = Get-Content -Raw $StateFile | ConvertFrom-Json
-        $packagesToRestore = $state.DisabledPackages
+        try {
+            $state = Get-Content -Raw $StateFile | ConvertFrom-Json
+            $packagesToRestore = $state.DisabledPackages
+            Write-Host ("[*] Loaded {0} package(s) from snapshot (Level: {1})" -f $packagesToRestore.Count, $state.Level) -ForegroundColor Cyan
+        } catch {
+            Write-Host ("[!] Error reading state file: {0}. Falling back to Aggressive list." -f $_.Message) -ForegroundColor Yellow
+            $packagesToRestore = $Script:DebloatTiers["Aggressive"]
+        }
     } else {
         # Fallback to restoring all known debloat packages
+        Write-Host "[*] No snapshot file found. Re-enabling all known debloat packages..." -ForegroundColor Yellow
         $packagesToRestore = $Script:DebloatTiers["Aggressive"]
     }
 
@@ -838,7 +933,8 @@ function Import-FireTVProfile {
     Write-Host ("[+] Importing configuration for {0} {1}..." -f $data.Manufacturer, $data.Model) -ForegroundColor Cyan
 
     if ($data.PrivateDnsSpecifier) {
-        Invoke-Adb "-s $Target shell settings put global private_dns_mode $($data.PrivateDnsMode)" | Out-Null
+        $mode = if ($data.PrivateDnsMode) { $data.PrivateDnsMode } else { "hostname" }
+        Invoke-Adb "-s $Target shell settings put global private_dns_mode $mode" | Out-Null
         Invoke-Adb "-s $Target shell settings put global private_dns_specifier $($data.PrivateDnsSpecifier)" | Out-Null
         Write-Host ("    [+] Restored Private DNS: {0}" -f $data.PrivateDnsSpecifier) -ForegroundColor Green
     }
@@ -850,7 +946,7 @@ Write-Header
 if ($RestoreDebloat) {
     $target = Connect-FireTV $TargetIP
     if ($target) {
-        Restore-FireTVPackages $target
+        Restore-FireTVPackages $target $DebloatStatePath
     }
     exit 0
 }

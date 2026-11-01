@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="#-automated-testing--verification"><img src="https://img.shields.io/badge/Tests-34%2F34%20Passing-brightgreen?logo=checkmarx&style=for-the-badge" alt="Tests" /></a>
+  <a href="#-automated-testing--verification"><img src="https://img.shields.io/badge/Tests-46%2F46%20Passing-brightgreen?logo=checkmarx&style=for-the-badge" alt="Tests" /></a>
   <img src="https://img.shields.io/badge/Platform-Fire%20OS%20%7C%20Android%20TV-FF9900?logo=amazon&style=for-the-badge" alt="Platform" />
   <img src="https://img.shields.io/badge/AdGuard-Encrypted%20DoT-00C853?logo=adguard&style=for-the-badge" alt="AdGuard DoT" />
   <img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="License" />
@@ -180,7 +180,7 @@ firetv-setup-kit/
 │   ├── setup.ps1                 # Discovery engine & interactive app checklist
 │   └── prepare-usb.ps1           # USB drive packaging script
 ├── tests/                        # Automated testing suite
-│   └── Run-Tests.ps1             # 28-point automated test runner
+│   └── Run-Tests.ps1             # 46-point automated test runner (AST & Live)
 ├── .github/workflows/
 │   └── ci.yml                    # Automated GitHub Actions CI workflow
 └── docs/                         # Technical documentation
